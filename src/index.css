@@ -1,0 +1,1033 @@
+/* =================================================
+   GLOBAL
+   ================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+}
+
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+@keyframes App-logo-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* =================================================
+   AUTH / LOGIN
+   ================================================= */
+
+/* =================================================
+   LOGIN BACKGROUND (MOVED FROM JS TO CSS)
+   ================================================= */
+
+/* Hide Admin Signup link (temporary security fix) */
+.auth-link {
+  display: none !important;
+}
+
+.auth-page {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background-image: url("./background-image.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  position: relative;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  margin: 0;
+  padding: 0;
+}
+
+
+.auth-card {
+  position: relative;
+  z-index: 50;
+  width: 400px;
+  background: #ffffff;
+  padding: 30px 25px 25px;
+  border-radius: 16px;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.12);
+  margin-top: 40px; /* space for logo */
+}
+.auth-card-wrapper {
+  position: relative;
+  transform: translateY(-40px); /* moves card + logo upward */
+}
+
+.auth-logo {
+  position: absolute;
+  top: -70px;          /* OUTSIDE the card */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90px;
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 50%;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+  z-index: 10;
+}
+
+
+.auth-title {
+  margin-bottom: 20px;
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.auth-input {
+  width: 100%;
+  height: 42px;
+  margin-bottom: 14px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+@media (min-width: 601px) {
+  .centered-input {
+    text-align: center;
+  }
+}
+/* =================================================
+   FILE UPLOAD FIELD
+   ================================================= */
+
+.upload-field {
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  background: #ffffff;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upload-field:focus-within {
+  border-color: #000;
+  background: #ffffff;
+}
+
+.upload-field__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #888;
+}
+
+.upload-field__preview {
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.upload-field input[type="file"] {
+  font-size: 13px;
+  color: #444;
+  cursor: pointer;
+  width: 100%;
+}
+
+.upload-field input[type="file"]::file-selector-button {
+  background: #ffd700;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-right: 12px;
+  transition: opacity 0.2s;
+}
+
+.upload-field input[type="file"]::file-selector-button:hover {
+  opacity: 0.85;
+}
+
+
+.auth-input:focus {
+  outline: none;
+  border-color: #000;
+}
+
+.auth-button {
+  width: auto !important;
+  min-width: 140px;
+  padding: 0 20px !important;
+  height: 42px;
+  /* margin-top: 20px; */
+  border-radius: 8px;
+  border: none;
+  background: #ffd700;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  gap:15px;
+  display: block;          /* important */
+  margin: 20px auto 0;     /* centers horizontally */
+}
+
+.auth-button:hover {
+  opacity: 0.9;
+}
+
+.google-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.google-button img {
+  width: 18px;
+  height: 18px;
+}
+
+.auth-error {
+  color: red;
+  font-size: 13px;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.auth-link {
+  margin-top: 14px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.auth-link span {
+  font-weight: 700;
+}
+
+/* =================================================
+   DASHBOARD + HEADER
+   ================================================= */
+
+.dashboard {
+  padding: 10px;
+  font-family: 'Outfit', sans-serif;
+  max-width: 100vw;
+  overflow-x: visible;
+}
+
+/* HEADER CENTER FIX */
+.dashboard-header {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.dashboard-title {
+  text-align: center;
+  line-height: 1.2;
+}
+/* Tighten Admin Dashboard text */
+.dashboard-title p,
+.dashboard-subtitle {
+  margin: 4px 0 !important;
+}
+
+.brand-title {
+  font-size: 38px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.dashboard-subtitle {
+  font-size: 2px; /* ❌ original (kept as-is) */
+  font-weight: 600;
+}
+
+.logout-btn {
+  position: absolute;
+  right: 0;
+}
+
+/* =================================================
+   DASHBOARD TABS
+   ================================================= */
+
+.dashboard-tabs {
+  display: flex;
+  gap: 45px; /* Perfect balanced spacing with breathing room */
+  margin: 20px 0;
+}
+
+.dashboard-tabs-centered {
+  justify-content: center;
+}
+
+.dashboard-tabs span,
+.dashboard-tabs button {
+  background: none;
+  border: none;
+  padding-bottom: 6px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.dashboard-tabs .active {
+  border-bottom: 3px solid #ffd700;
+  font-weight: 600;
+}
+
+/* =================================================
+   SERVICES PAGE
+   ================================================= */
+
+.services-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.service-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+}
+.service-card-actions {
+  margin-top: auto;              /* push buttons to bottom */
+  display: flex;
+  justify-content: flex-end;     /* move to right */
+  gap: 8px;                     /* space between buttons */
+}
+
+.service-card img {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.service-card-content {
+  flex: 1;
+  margin-top: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px; /* Reduced spacing between items */
+}
+
+.service-card-content h3 {
+  margin-bottom: 0px; /* Removed extra margin */
+  font-size: 16px;
+  font-weight: 700;
+  min-height: 2.2em; /* Tighter height for title area */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.2;
+}
+
+.service-card-content p {
+  font-size: 14px;
+  margin: 0;
+}
+
+.price-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.price-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.original-price {
+  text-decoration: line-through;
+  color: #888;
+  font-size: 13px;
+}
+
+.price {
+  font-weight: 700;
+  color: #000;
+  font-size: 17px;
+}
+
+.discount-label {
+  color: #059669; /* emerald-600 */
+  font-weight: 600;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.edit-btn {
+  align-self: flex-end;
+  margin-top: 12px;
+  background: #ffd700;
+  border: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* =================================================
+   BOOKINGS PAGE
+   ================================================= */
+
+.booking-grid,
+.booking-card {
+  display: none !important;
+}
+
+.booking-table-wrapper {
+  margin-top: 0px;
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  overflow-x: auto;
+  border-radius: 12px;
+  padding-bottom: 5px; /* space between table and scrollbar */
+}
+
+/* Custom Thin Scrollbar for the table wrapper */
+.booking-table-wrapper::-webkit-scrollbar {
+  height: 8px; /* Slim horizontal scrollbar */
+}
+.booking-table-wrapper::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 6px;
+  margin: 0 10px; /* inset the track slightly */
+}
+.booking-table-wrapper::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 6px;
+}
+.booking-table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.booking-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.booking-table thead {
+  background: #f5f5f5;
+}
+
+.booking-table th {
+  padding: 14px 12px;
+  text-align: left;
+  font-weight: 700;
+  border-bottom: 1px solid #ddd;
+  border-right: 1px solid #e0e0e0;
+  white-space: nowrap;
+}
+
+.booking-table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid #eee;
+  border-right: 1px solid #eaeaea;
+  vertical-align: middle;
+}
+
+.booking-table th:last-child,
+.booking-table td:last-child {
+  border-right: none;
+}
+
+.booking-table tbody tr:hover {
+  background: #fafafa;
+}
+
+.booking-table td:last-child {
+  text-align: right;
+}
+
+/* =================================================
+   COMMON BUTTONS
+   ================================================= */
+
+.allot-btn {
+  padding: 8px 14px;
+  background: #ffd700;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-right: 20%;
+  
+}
+
+.allot-btn:hover {
+  opacity: 0.85;
+}
+
+/* =================================================
+   STAFF CARDS
+   ================================================= */
+
+.staff-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.staff-card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+  width: 300px;
+  position: relative;
+}
+
+.staff-card p {
+  margin-bottom: 8px;
+  font-size: 15px;
+}
+
+.staff-card p:last-of-type {
+  margin-bottom: 12px;
+}
+
+/* =================================================
+   CENTER BACK TO BOOKINGS BUTTON
+   ================================================= */
+
+.staff-back-center {
+  display: flex;
+  justify-content: center;
+  margin-top: 30px;
+}
+
+/* =================================================
+   IMAGE MODAL
+   ================================================= */
+
+.image-modal-content {
+  min-width: 480px;
+  padding: 20px 60px;
+  position: relative;
+}
+
+.modal-work-img {
+  max-width: 450px;
+  max-height: 80vh;
+}
+
+.modal-nav-btn {
+  border: none;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-ok-btn {
+  min-width: 60px;
+  padding: 6px 16px;
+  font-size: 14px;
+  margin-top: 15px !important;
+  display: block;
+}
+
+/* =================================================
+   CLEAR FILTER BUTTON
+   ================================================= */
+
+.clear-filter-btn {
+  /* background: #ffd700 !important;
+  color: #000;
+  padding: 8px 18px;
+  height: 36px;
+  border-radius: 8px;
+  border: none;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  width:40%; */
+  width: 40%;
+  height: 42px;
+  /* margin-top: 20px; */
+  border-radius: 8px;
+  border: none;
+  background: #ffd700;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.clear-filter-btn:hover {
+  opacity: 0.85;
+}
+/* Password wrapper */
+.password-wrapper {
+  position: relative;
+}
+
+/* Add space for eye */
+.password-wrapper .auth-input {
+  padding-right: 45px;
+}
+
+/* Eye button */
+.eye-button {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-60%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+}
+
+
+/* =================================================
+   RESPONSIVE
+   ================================================= */
+
+@media (max-width: 900px) {
+  .services-grid,
+  .staff-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .booking-table th,
+  .booking-table td {
+    font-size: 13px;
+    padding: 10px;
+  }
+}
+
+@media (max-width: 600px) {
+  .services-grid,
+  .staff-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-table {
+    font-size: 12px;
+  }
+
+  /* Make auth and modal cards responsive */
+  .auth-card, .modal-card {
+    width: 90% !important;
+    padding: 20px 15px !important;
+    margin-top: 10px !important;
+  }
+
+  .staff-card p {
+    margin-bottom: 12px !important; /* Increased space for mobile */
+  }
+  .staff-card p:last-of-type {
+    margin-bottom: 12px !important; /* Space before buttons */
+  }
+
+  .image-modal-content {
+    min-width: 90% !important;
+    width: 90% !important;
+    padding: 20px !important;
+  }
+
+  .modal-work-img {
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: 70vh !important;
+  }
+
+  .modal-nav-btn.prev {
+    left: 5px !important;
+  }
+  .modal-nav-btn.next {
+    right: 5px !important;
+  }
+  .modal-ok-btn {
+    margin: 15px 0 0 !important;
+    width: auto !important;
+  }
+
+  .auth-page {
+    background-attachment: scroll !important;
+  }
+
+  /* Responsive Header */
+  .dashboard-logo-row {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 15px;
+  }
+  .hide-on-mobile {
+    display: none !important;
+  }
+  .hide-on-desktop {
+    display: block !important;
+  }
+  .dashboard-logo-row > div:last-child {
+    display: flex !important;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    text-align: center !important;
+  }
+  .allot-btn {
+    margin: 0 !important;
+  }
+
+  /* Responsive Tabs */
+.dashboard-tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  white-space: nowrap;
+  gap: 10px !important;
+  justify-content: flex-start !important;
+  padding-left: 0 !important;
+  scrollbar-width: none;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.dashboard-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.dashboard-tabs button,
+.dashboard-tabs span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.dashboard {
+  overflow-x: visible;
+}
+  /* Bookings Filters Layout */
+  .dashboard > h1 + div {
+    flex-direction: column-reverse !important;
+    gap: 15px;
+    margin-top: 15px !important;
+  }
+  .dashboard > h1 + div > div:last-child {
+    flex-direction: row !important;
+    justify-content: flex-start !important;
+    padding-left: 0 !important;
+    gap: 8px;
+    width: 100%;
+    flex-wrap: nowrap;
+  }
+  .dashboard > h1 + div > div:last-child > select {
+    width: 85px !important;
+    font-size: 11px;
+    padding: 6px 4px !important;
+    margin: 0 !important;
+  }
+  .dashboard > h1 + div > div:last-child > button {
+    width: 100px !important;
+    font-size: 11px;
+    padding: 6px 4px !important;
+    margin: 0 !important;
+    white-space: nowrap;
+  }
+  
+  /* Make tables horizontally scrollable when overflowing their hidden inline containers */
+  .dashboard table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .dashboard h2 {
+    margin-bottom: 20px !important;
+  }
+
+  .services-header-row {
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    width: 100% !important;
+    gap: 15px !important;
+  }
+
+  .service-filter {
+    max-width: 120px !important;
+    font-size: 12px !important;
+    padding: 0 8px !important;
+    margin: 0 !important;
+    transform: translateY(-5px) !important;
+    cursor: pointer !important;
+    border: 1px solid #000 !important;
+    height: 34px !important;
+    box-sizing: border-box !important;
+    background: #fff !important;
+  }
+
+  .services-title-container {
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    width: 100% !important;
+    gap: 80px !important;
+    padding-right: 5px !important;
+  }
+
+  .services-header-row > div {
+    display: flex !important;
+    gap: 10px !important;
+  }
+
+  .services-header-row button {
+    font-size: 14px !important;
+    padding: 6px 12px !important;
+  }
+
+  .account-dropdown {
+    right: 20% !important;
+    transform: translateX(50%) !important;
+    top: 45px !important;
+    min-width: 140px !important;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15) !important;
+  }
+
+  .services-edit-page,
+  .services-profile-page,
+  .services-add-page,
+  .services-addon-page {
+    padding-top: 60px !important; /* Reduced from 80px */
+    align-items: flex-start !important;
+  }
+
+  .services-edit-page .auth-card,
+  .services-profile-page .auth-card,
+  .services-add-page .auth-card,
+  .services-addon-page .auth-card {
+    margin-top: 25px !important; /* Reduced from 60px */
+  }
+}
+
+/* =================================================
+   ✅ ADDITIONS ONLY (SPACING FIX)
+   ================================================= */
+
+/* Reduce top whitespace */
+.dashboard {
+  padding-top: 0px;
+}
+
+/* Reduce space between Neatify Nation & Admin Dashboard */
+.brand-title {
+  margin-bottom: 4px;
+}
+
+/* Fix Admin Dashboard text size */
+.dashboard-subtitle {
+  font-size: 18px;
+  margin-top: 2px;
+}
+.service-filter {
+  margin-left: auto;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background-color: #ffffff;
+  cursor: pointer;
+  outline: none;
+  min-width: 150px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.service-filter:hover {
+  border-color: #cbd5e1;
+}
+
+.service-filter:focus {
+  border-color: #ffd700;
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.2);
+}
+/* Gap between Services and Add Service tabs */
+.services-header-row > div {
+  display: flex;
+  gap: 40px;   /* adjust if needed: 30px / 40px / 50px */
+}
+/* =================================================
+   ACCOUNT DROPDOWN
+   ================================================= */
+
+.account-dropdown {
+  position: absolute;
+  top: 45px;
+  right: 10%;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  z-index: 1000;
+  min-width: 120px;
+}
+
+.account-dropdown div {
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.services-title-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.services-wrapper {
+  padding-left: 20px;
+  padding-right: 20px;
+}
+
+.hide-on-desktop {
+  display: none;
+}
+/* ============================
+   NEW: COMMON MODAL STYLES
+   ============================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.modal-card {
+  background: #ffffff;
+  padding: 30px 28px;
+  border-radius: 12px;
+  width: 380px;
+  position: relative;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.2);
+}
+
+.modal-title {
+  text-align: center;
+  margin-bottom: 20px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 15px;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.date-time-container {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .date-time-container {
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+  }
+  .time-part {
+    color: #64748b;
+  }
+}
+
+/* Remove blue highlight on date input segments */
+input[type="date"],
+input[type="month"] {
+  accent-color: #ffd700;
+}
+input[type="date"]::-webkit-datetime-edit-fields-wrapper,
+input[type="date"]::-webkit-datetime-edit-day-field,
+input[type="date"]::-webkit-datetime-edit-month-field,
+input[type="date"]::-webkit-datetime-edit-year-field,
+input[type="month"]::-webkit-datetime-edit-fields-wrapper,
+input[type="month"]::-webkit-datetime-edit-month-field,
+input[type="month"]::-webkit-datetime-edit-year-field {
+  background-color: transparent !important;
+  color: inherit !important;
+}
+input[type="date"]::-webkit-datetime-edit-day-field::selection,
+input[type="date"]::-webkit-datetime-edit-month-field::selection,
+input[type="date"]::-webkit-datetime-edit-year-field::selection,
+input[type="month"]::-webkit-datetime-edit-month-field::selection,
+input[type="month"]::-webkit-datetime-edit-year-field::selection {
+  background: transparent !important;
+}
+input[type="date"]:focus::-webkit-datetime-edit-day-field,
+input[type="date"]:focus::-webkit-datetime-edit-month-field,
+input[type="date"]:focus::-webkit-datetime-edit-year-field,
+input[type="month"]:focus::-webkit-datetime-edit-month-field,
+input[type="month"]:focus::-webkit-datetime-edit-year-field {
+  background-color: transparent !important;
+}
