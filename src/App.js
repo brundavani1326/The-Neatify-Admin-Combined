@@ -8,6 +8,7 @@ import {
 import { supabase } from "./supabase";
 import Loader from "./components/Loader";
 import AddOn from "./components/AddOn";
+import StaffCancellationAlert from "./components/StaffCancellationAlert";
 
 const Login = lazy(() => import("./components/Login"));
 // const Signup = lazy(() => import("./components/Signup"));
@@ -49,6 +50,14 @@ function ProtectedRoute({ children }) {
 function App() {
   return (
     <Router>
+      {/*
+        IMPORTANT:
+        This component is outside <Routes>, so it stays mounted while the
+        Admin moves between Dashboard, Profile, Services, Add-ons, etc.
+        Therefore a staff cancellation can alert the Admin on ANY page.
+      */}
+      <StaffCancellationAlert />
+
       <Suspense fallback={<Loader />}>
         <Routes>
           {/* PUBLIC ROUTES */}
@@ -82,6 +91,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/add-on"
             element={
@@ -90,6 +100,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/edit-addon/:id"
             element={
@@ -107,6 +118,7 @@ function App() {
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/edit-main-category/:id"
             element={

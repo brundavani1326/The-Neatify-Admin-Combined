@@ -188,6 +188,34 @@ function Dashboard() {
     localStorage.setItem("adminActiveTab", activeTab);
   }, [activeTab]);
 
+  // Open the existing All Staff / Assign Staff screen when the global
+  // cancellation popup requests a reassign. This works whether Dashboard
+  // was already open or was reached by navigation from another page.
+  useEffect(() => {
+    const openStaffForReassign = () => {
+      if (localStorage.getItem("forceOpenStaff") !== "true") return;
+
+      setActiveTab("bookings");
+      setIsStaffViewOpen(true);
+
+      // The actual selected booking is restored by Bookings.js from
+      // bookingsSelectedBooking / staffCancellationReassignBooking.
+      localStorage.setItem("adminActiveTab", "bookings");
+      localStorage.setItem("bookingsShowStaff", "true");
+
+      // Consume the one-time navigation flag so normal Dashboard visits
+      // do not unexpectedly reopen the Staff screen.
+      localStorage.setItem("forceOpenStaff", "false");
+    };
+
+    openStaffForReassign();
+    window.addEventListener("forceOpenStaffUpdate", openStaffForReassign);
+
+    return () => {
+      window.removeEventListener("forceOpenStaffUpdate", openStaffForReassign);
+    };
+  }, []);
+
   const [showEarnings, setShowEarnings] = useState(false);
   const [earningsStaff, setEarningsStaff] = useState(null);
   const [earningsLoading, setEarningsLoading] = useState(false);

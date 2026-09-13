@@ -479,6 +479,9 @@ function BookingPage() {
   });
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffList, setStaffList] = useState([]);
+  // Calendar availability for each staff member, keyed by normalized email.
+  // Example: { "staff@example.com": { "2026-09-18": "not_available", "2026-09-19": "available" } }
+  const [staffCalendarMap, setStaffCalendarMap] = useState({});
   const [hubLocations, setHubLocations] = useState([]);
   const [hubCategoryCounts, setHubCategoryCounts] = useState([]);
   const [maxRadiusKm, setMaxRadiusKm] = useState(10);
@@ -865,7 +868,6 @@ function BookingPage() {
   const [assignmentDone, setAssignmentDone] = useState(false);
   const [commonModalTitle, setCommonModalTitle] = useState("");
   const [showCommonModal, setShowCommonModal] = useState(false);
-
 
   const [showRefundConfirm, setShowRefundConfirm] = useState(false);
   const [showCommonSuccess, setShowCommonSuccess] = useState(false);
@@ -1357,61 +1359,6 @@ function BookingPage() {
     }
   };
 
-  useEffect(() => {
-    const handleForceOpen = () => {
-      const forceOpen = localStorage.getItem("forceOpenStaff");
-      if (forceOpen === "true") {
-        setShowStaff(true);
-        setSelectedBooking(null);
-        setSelectedStaff(null);
-        // Initialize date for the view if not set
-        if (!assignDate) {
-          setAssignDate(new Date().toISOString().split("T")[0]);
-        }
-        fetchAllStaffProfiles();
-        localStorage.removeItem("forceOpenStaff");
-      } else if (forceOpen === "false") {
-        setShowStaff(false);
-        localStorage.removeItem("forceOpenStaff");
-      }
-    };
-
-    handleForceOpen();
-    window.addEventListener("forceOpenStaffUpdate", handleForceOpen);
-
-    // REAL-TIME SUBSCRIPTION
-    const channel = supabase
-      .channel("bookings-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "bookings" },
-        async () => {
-          try {
-            await fetchBookings(true);
-          } catch (err) {
-            console.error("Real-time sync failed:", err);
-          }
-        }
-      )
-      .subscribe();
-
-    // AUTO-SYNC FALLBACK (Checks every 10 seconds in the background)
-    const syncInterval = setInterval(async () => {
-      try {
-        await fetchBookings(true);
-      } catch (err) {
-        console.error("Auto-sync failed:", err);
-      }
-    }, 10000);
-
-    return () => {
-      window.removeEventListener("forceOpenStaffUpdate", handleForceOpen);
-      supabase.removeChannel(channel);
-      clearInterval(syncInterval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Persist activeTab to localStorage
   useEffect(() => {
     localStorage.setItem("bookingsActiveTab", activeTab);
@@ -1674,6 +1621,57 @@ function BookingPage() {
     }
   };
 
+  // Normalize a booking/calendar date to YYYY-MM-DD.
+  // This is deliberately separate from normalizeDateString(), which is
+  // used for booking-conflict display and returns DD-MM-YYYY.
+  const normalizeCalendarDate = (value) => {
+    if (!value) return "";
+    const raw = String(value).trim();
+
+    // ISO/date-time: 2026-09-18 or 2026-09-18T10:30:00...
+    const isoMatch = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (isoMatch) {
+      return `${isoMatch[1]}-${String(isoMatch[2]).padStart(2, "0")}-${String(isoMatch[3]).padStart(2, "0")}`;
+    }
+
+    // DD-MM-YYYY / DD/MM/YYYY
+    const dmyMatch = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmyMatch) {
+      return `${dmyMatch[3]}-${String(dmyMatch[2]).padStart(2, "0")}-${String(dmyMatch[1]).padStart(2, "0")}`;
+    }
+
+    return raw.split("T")[0];
+  };
+
+  // Read availability using exactly the same key styles supported by
+  // the Staff Availability Calendar: padded date, unpadded date, day number.
+  const getStaffCalendarStatus = (staff, bookingDate) => {
+    const email = String(staff?.email || "").trim().toLowerCase();
+    if (!email || !bookingDate) return "";
+
+    const calendar = staffCalendarMap?.[email];
+    if (!calendar || typeof calendar !== "object") return "";
+
+    const normalizedDate = normalizeCalendarDate(bookingDate);
+    if (!normalizedDate) return "";
+
+    const parts = normalizedDate.split("-");
+    const year = parts[0];
+    const month = parts[1];
+    const day = String(Number(parts[2]));
+
+    const paddedDate = `${year}-${month}-${String(Number(parts[2])).padStart(2, "0")}`;
+    const unpaddedDate = `${year}-${String(Number(month))}-${day}`;
+
+    const value =
+      calendar[paddedDate] ??
+      calendar[unpaddedDate] ??
+      calendar[day] ??
+      calendar[String(Number(day))];
+
+    return value == null ? "" : String(value).trim().toLowerCase();
+  };
+
   const handleAllotStaff = async (staff) => {
     if (!selectedBooking) {
       triggerModal("Booking Selection Required", "Please select a booking first to assign this staff member.");
@@ -1682,6 +1680,17 @@ function BookingPage() {
 
     if (staff.is_blocked === true) {
       triggerModal("Partner Blocked", "This staff member is currently blocked and cannot be assigned to bookings.");
+      return;
+    }
+
+    const selectedBookingDate = selectedBooking.booking_date || assignDate || "";
+    const calendarStatus = getStaffCalendarStatus(staff, selectedBookingDate);
+
+    if (calendarStatus === "not_available" || calendarStatus === "not available" || calendarStatus === "unavailable") {
+      triggerModal(
+        "Partner Not Available",
+        `${staff.name || staff.email || "This partner"} is marked Not Available on ${selectedBookingDate}. Please select another partner.`
+      );
       return;
     }
 
@@ -2098,25 +2107,85 @@ function BookingPage() {
   /* ================= STAFF FLOW ================= */
   const fetchAllStaffProfiles = async () => {
     setStaffLoading(true);
-    const { data, error } = await supabase
-      .from("staff_profile")
-      .select("*");
 
-    if (error) {
-      console.error("Error fetching staff profiles:", error);
+    try {
+      const { data, error } = await supabase
+        .from("staff_profile")
+        .select("*");
+
+      if (error) {
+        console.error("Error fetching staff profiles:", error);
+      }
+
+      const mappedData = (data || []).map(staff => ({
+        ...staff,
+        account_holder_name: staff.BNF_NAME || "",
+        account_number: staff.BENE_ACC_NO || "",
+        ifsc_code: staff.BENE_IFSC || "",
+        aadhar_number: staff.aadhar_number || "",
+        tagged_partner: staff.tagged_partner || "",
+      }));
+
+      setStaffList(mappedData);
+
+      // IMPORTANT:
+      // The "Bookings to Complete" column must use the SAME
+      // staff_monthly_availability data that the calendar modal uses.
+      const emails = mappedData
+        .map((s) => String(s.email || "").trim().toLowerCase())
+        .filter(Boolean);
+
+      if (emails.length === 0) {
+        setStaffCalendarMap({});
+        return;
+      }
+
+      const { data: availabilityRows, error: availabilityError } = await supabase
+        .from("staff_monthly_availability")
+        .select("*")
+        .in("staff_email", emails);
+
+      if (availabilityError) {
+        console.error("Error fetching staff monthly availability:", availabilityError);
+        setStaffCalendarMap({});
+      } else {
+        const availabilityMap = {};
+
+        (availabilityRows || []).forEach((row) => {
+          const email = String(row.staff_email || "").trim().toLowerCase();
+          if (!email) return;
+
+          let calendarData = row.calendar_data ?? row.calender_data ?? {};
+
+          if (typeof calendarData === "string") {
+            try {
+              calendarData = JSON.parse(calendarData);
+            } catch (e) {
+              console.warn("Invalid calendar_data for", email, e);
+              calendarData = {};
+            }
+          }
+
+          if (!calendarData || typeof calendarData !== "object") {
+            calendarData = {};
+          }
+
+          // If more than one monthly row exists for the same staff,
+          // merge them instead of losing earlier dates.
+          availabilityMap[email] = {
+            ...(availabilityMap[email] || {}),
+            ...calendarData,
+          };
+        });
+
+        setStaffCalendarMap(availabilityMap);
+      }
+    } catch (err) {
+      console.error("Error loading staff profiles/availability:", err);
+      setStaffCalendarMap({});
+    } finally {
+      setStaffLoading(false);
     }
-
-    const mappedData = (data || []).map(staff => ({
-      ...staff,
-      account_holder_name: staff.BNF_NAME || "",
-      account_number: staff.BENE_ACC_NO || "",
-      ifsc_code: staff.BENE_IFSC || "",
-      aadhar_number: staff.aadhar_number || "",
-      tagged_partner: staff.tagged_partner || "",
-    }));
-
-    setStaffList(mappedData);
-    setStaffLoading(false);
   };
 
   const handleToggleBlockStaff = async (staff) => {
@@ -2228,6 +2297,35 @@ function BookingPage() {
 
     await fetchAllStaffProfiles();
   };
+
+  // Restore the existing Assign Staff UI when the global staff-cancellation
+  // alert asks Admin to reassign the cancelled booking.
+  useEffect(() => {
+    const openCancelledBookingForReassign = () => {
+      const savedBooking = localStorage.getItem("staffCancellationReassignBooking");
+      if (!savedBooking) return;
+
+      try {
+        const booking = JSON.parse(savedBooking);
+        if (booking?.id) {
+          console.log("🔄 Opening existing Assign Staff UI for cancelled booking:", booking.id);
+          fetchStaff(booking);
+          localStorage.removeItem("staffCancellationReassignBooking");
+        }
+      } catch (error) {
+        console.error("❌ Failed to restore cancellation booking:", error);
+        localStorage.removeItem("staffCancellationReassignBooking");
+      }
+    };
+
+    openCancelledBookingForReassign();
+    window.addEventListener("staffCancellationReassignReady", openCancelledBookingForReassign);
+
+    return () => {
+      window.removeEventListener("staffCancellationReassignReady", openCancelledBookingForReassign);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const generateOtp = () =>
     Math.floor(100000 + Math.random() * 900000).toString();
@@ -2800,7 +2898,7 @@ function BookingPage() {
                   cursor: "pointer"
                 }}
               >
-                Waiting for Acceptance...
+                assigned
               </button>
             );
           })()}
@@ -4286,49 +4384,119 @@ function BookingPage() {
                               })}
                             </div>
                           </div>
-                        ) : (
-                          <div style={{ display: "flex", justifyContent: "center" }}>
-                            <span
-                              style={{
-                                display: "inline-block",
-                                backgroundColor: "#f0fdf4",
-                                color: "#166534",
-                                border: "1px solid #bbf7d0",
-                                borderRadius: "6px",
-                                padding: "6px 14px",
-                                fontSize: "13px",
-                                fontWeight: "600",
-                                textAlign: "center"
-                              }}
-                            >
-                              ✓ Free on {selectedBooking?.booking_date || "Selected Date"}
-                            </span>
-                          </div>
-                        )}
+                        ) : (() => {
+                          const bookingDate = selectedBooking?.booking_date || assignDate || "";
+                          const calendarStatus = getStaffCalendarStatus(staff, bookingDate);
+                          const calendarNotAvailable =
+                            calendarStatus === "not_available" ||
+                            calendarStatus === "not available" ||
+                            calendarStatus === "unavailable";
+                          const calendarAvailable = calendarStatus === "available";
+
+                          if (calendarNotAvailable) {
+                            return (
+                              <div style={{ display: "flex", justifyContent: "center" }}>
+                                <span
+                                  style={{
+                                    display: "inline-block",
+                                    backgroundColor: "#fef2f2",
+                                    color: "#dc2626",
+                                    border: "1px solid #fecaca",
+                                    borderRadius: "6px",
+                                    padding: "6px 14px",
+                                    fontSize: "13px",
+                                    fontWeight: "700",
+                                    textAlign: "center"
+                                  }}
+                                >
+                                  ✕ Not available on {bookingDate || "Selected Date"}
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          if (calendarAvailable) {
+                            return (
+                              <div style={{ display: "flex", justifyContent: "center" }}>
+                                <span
+                                  style={{
+                                    display: "inline-block",
+                                    backgroundColor: "#f0fdf4",
+                                    color: "#166534",
+                                    border: "1px solid #bbf7d0",
+                                    borderRadius: "6px",
+                                    padding: "6px 14px",
+                                    fontSize: "13px",
+                                    fontWeight: "700",
+                                    textAlign: "center"
+                                  }}
+                                >
+                                  ✓ Free on {bookingDate || "Selected Date"}
+                                </span>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div style={{ display: "flex", justifyContent: "center" }}>
+                              <span
+                                style={{
+                                  display: "inline-block",
+                                  backgroundColor: "#f8fafc",
+                                  color: "#64748b",
+                                  border: "1px solid #cbd5e1",
+                                  borderRadius: "6px",
+                                  padding: "6px 14px",
+                                  fontSize: "12px",
+                                  fontWeight: "700",
+                                  textAlign: "center"
+                                }}
+                              >
+                                • Schedule Not Marked for {bookingDate || "Selected Date"}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Assign Staff */}
                       <td style={{ padding: "12px 20px", width: "180px" }}>
-                        <button
-                          className="allot-btn"
-                          style={{
-                            margin: 0,
-                            padding: "8px 14px",
-                            fontSize: "13px",
-                            fontWeight: "700",
-                            opacity: staff.is_blocked === true ? 0.7 : 1,
-                            cursor: staff.is_blocked === true ? "not-allowed" : "pointer",
-                            backgroundColor: staff.is_blocked === true ? "#fee2e2" : "#facc15",
-                            color: staff.is_blocked === true ? "#dc2626" : "#1e293b",
-                            border: staff.is_blocked === true ? "1px solid #fecaca" : "none",
-                            width: "100%",
-                            borderRadius: "8px"
-                          }}
-                          disabled={staff.is_blocked === true}
-                          onClick={() => handleAllotStaff(staff)}
-                        >
-                          {staff.is_blocked === true ? "Blocked Partner" : "Assign Staff"}
-                        </button>
+                        {(() => {
+                          const bookingDate = selectedBooking?.booking_date || assignDate || "";
+                          const calendarStatus = getStaffCalendarStatus(staff, bookingDate);
+                          const calendarNotAvailable =
+                            calendarStatus === "not_available" ||
+                            calendarStatus === "not available" ||
+                            calendarStatus === "unavailable";
+                          const buttonDisabled = staff.is_blocked === true || calendarNotAvailable;
+
+                          return (
+                            <button
+                              className="allot-btn"
+                              style={{
+                                margin: 0,
+                                padding: "8px 14px",
+                                fontSize: "13px",
+                                fontWeight: "700",
+                                opacity: buttonDisabled ? 0.7 : 1,
+                                cursor: buttonDisabled ? "not-allowed" : "pointer",
+                                backgroundColor: buttonDisabled ? "#fee2e2" : "#facc15",
+                                color: buttonDisabled ? "#dc2626" : "#1e293b",
+                                border: buttonDisabled ? "1px solid #fecaca" : "none",
+                                width: "100%",
+                                borderRadius: "8px"
+                              }}
+                              disabled={buttonDisabled}
+                              onClick={() => handleAllotStaff(staff)}
+                            >
+                              {staff.is_blocked === true
+                                ? "Blocked Partner"
+                                : calendarNotAvailable
+                                  ? "Not Available"
+                                  : "Assign Staff"}
+                            </button>
+                          );
+                        })()}
                       </td>
 
                       {/* Current Status */}
@@ -8096,4 +8264,3 @@ function BookingPage() {
 
 export default BookingPage;
 
-/* eslint-disable no-unused-vars */
