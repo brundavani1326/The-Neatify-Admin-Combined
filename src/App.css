@@ -1,0 +1,200 @@
+/* =================================================
+   GLOBAL
+   ================================================= */
+
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+@keyframes App-logo-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* =================================================
+   AUTH / LOGIN
+   ================================================= */
+
+.auth-page {
+  min-height: 100vh;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.auth-card {
+  width: 320px;
+  background: #ffffff;
+  padding: 28px;
+  border-radius: 16px;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.12);
+}
+
+.auth-title {
+  margin-bottom: 20px;
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.auth-input {
+  width: 100%;
+  height: 44px;
+  margin-bottom: 14px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.auth-input:focus {
+  outline: none;
+  border-color: #000;
+}
+
+.auth-button {
+  width: 100%;
+  height: 44px;
+  margin-top: 10px;
+  border-radius: 8px;
+  border: none;
+  background: #ffd700;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-button:hover {
+  opacity: 0.9;
+}
+
+.auth-link {
+  margin-top: 14px;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: center;
+}
+
+/* =================================================
+   DASHBOARD + TABS
+   ================================================= */
+
+.dashboard {
+  padding: 30px;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.dashboard-tabs {
+  display: flex;
+  gap: 45px;
+  margin: 20px 0;
+}
+
+.dashboard-tabs button {
+  background: none;
+  border: none;
+  padding-bottom: 6px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.dashboard-tabs .active {
+  border-bottom: 3px solid #ffd700;
+  font-weight: 600;
+}
+
+/* =================================================
+   SERVICES PAGE
+   ================================================= */
+
+.services-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.service-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+}
+
+.service-card img {
+  width: 100%;
+  height: 300px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.service-card-content {
+  flex: 1;
+  margin-top: 10px;
+}
+
+.price {
+  font-weight: 600;
+}
+
+/* =================================================
+   ✅ FIX: DELETE & EDIT BUTTONS RIGHT ALIGN
+   ================================================= */
+
+/* Button container (even if JSX already has it) */
+.service-actions {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;   /* 👉 RIGHT SIDE */
+  gap: 12px;                  /* 👉 SPACE BETWEEN BUTTONS */
+}
+
+/* Override old edit button rule */
+.edit-btn,
+.delete-btn {
+  align-self: unset;          /* ❌ remove left alignment */
+  background: #ffd700;
+  border: none;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.edit-btn:hover,
+.delete-btn:hover {
+  opacity: 0.85;
+}
+
+
+/* =================================================
+   RESPONSIVE
+   ================================================= */
+
+@media (max-width: 900px) {
+  .services-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .services-grid {
+    grid-template-columns: 1fr;
+  }
+}
