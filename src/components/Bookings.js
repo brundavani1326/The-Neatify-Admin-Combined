@@ -464,8 +464,8 @@ const StaffMapViewModal = ({
     </div>
   );
 };
-
 function BookingPage() {
+  console.warn("🔥 TEST: BookingPage is running");
   const [bookings, setBookings] = useState([]);
   const [staffMap, setStaffMap] = useState({});
   const [reviewsMap, setReviewsMap] = useState({});
@@ -497,9 +497,10 @@ function BookingPage() {
   const [dutyLogsLoading, setDutyLogsLoading] = useState(false);
 
   // Customer Checklist states
-  const [customerChecklists, setCustomerChecklists] = useState([]);
-  const [showChecklistModal, setShowChecklistModal] = useState(false);
-  const [selectedChecklistTasks, setSelectedChecklistTasks] = useState([]);
+ const [customerChecklists, setCustomerChecklists] = useState([]);
+const [showChecklistModal, setShowChecklistModal] = useState(false);
+const [selectedChecklistTasks, setSelectedChecklistTasks] = useState([]);
+const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
 
   const formatMinutesToHoursStr = (mins) => {
     const totalMins = parseInt(mins || 0, 10);
@@ -571,9 +572,153 @@ function BookingPage() {
 
     return entries.sort((a, b) => b[0].localeCompare(a[0]));
   };
+  const handleCloseManualChecklist = async (bookingId) => {
+  if (!bookingId) return;
+
+  const confirmClose = window.confirm(
+    "Are you sure you want to close this manual booking checklist?"
+  );
+
+  if (!confirmClose) return;
+
+  try {
+    const { error } = await supabase
+      .from("booking_checklists")
+      .update({
+        manual_admin_completed: true,
+      })
+      .eq("booking_id", bookingId);
+
+    if (error) {
+      console.error(
+        "Failed to close manual checklist:",
+        error
+      );
+
+      triggerModal(
+        "Error",
+        "Could not close the checklist."
+      );
+
+      return;
+    }
+
+    triggerModal(
+      "Checklist Closed",
+      "The manual booking checklist has been closed successfully."
+    );
+
+    setCustomerChecklists((prev) =>
+      prev.map((cl) =>
+        String(cl.booking_id) === String(bookingId)
+          ? {
+              ...cl,
+              tasks: cl.tasks.map((task) => ({
+                ...task,
+                manual_admin_completed: true,
+              })),
+            }
+          : cl
+      )
+    );
+  } catch (error) {
+    console.error(
+      "Close manual checklist error:",
+      error
+    );
+
+    triggerModal(
+      "Error",
+      error?.message ||
+        "Could not close the checklist."
+    );
+  }
+};
+
+  const handleChecklistTaskToggle = async (taskIndex) => {
+    if (!selectedChecklistBooking?.booking_id) return;
+
+    const isManualBooking =
+      selectedChecklistBooking?.bookings?.platform === "Admin Manual";
+
+    const task = selectedChecklistTasks[taskIndex];
+    if (!task) return;
+
+    const currentCompleted = isManualBooking
+      ? task.manual_admin_completed === true
+      : (
+          task.customer_completed === true ||
+          task.customer_completed === "Completed" ||
+          task.customer_completed === "Yes"
+        );
+
+    const nextCompleted = !currentCompleted;
+
+    const updatePayload = isManualBooking
+      ? { manual_admin_completed: nextCompleted }
+      : { customer_completed: nextCompleted };
+
+    try {
+      const { error } = await supabase
+        .from("booking_checklists")
+        .update(updatePayload)
+        .eq("booking_id", selectedChecklistBooking.booking_id)
+        .eq("task_index", taskIndex);
+
+      if (error) {
+        console.error("Failed to update checklist task:", error);
+        triggerModal(
+          "Checklist Update Failed",
+          "Could not update this checklist task."
+        );
+        return;
+      }
+
+      setSelectedChecklistTasks((prev) =>
+        prev.map((item, index) =>
+          index === taskIndex
+            ? {
+                ...item,
+                ...(isManualBooking
+                  ? { manual_admin_completed: nextCompleted }
+                  : { customer_completed: nextCompleted }),
+              }
+            : item
+        )
+      );
+
+      setCustomerChecklists((prev) =>
+        prev.map((cl) =>
+          String(cl.booking_id) ===
+          String(selectedChecklistBooking.booking_id)
+            ? {
+                ...cl,
+                tasks: cl.tasks.map((item, index) =>
+                  index === taskIndex
+                    ? {
+                        ...item,
+                        ...(isManualBooking
+                          ? { manual_admin_completed: nextCompleted }
+                          : { customer_completed: nextCompleted }),
+                      }
+                    : item
+                ),
+              }
+            : cl
+        )
+      );
+    } catch (error) {
+      console.error("Checklist task toggle error:", error);
+      triggerModal(
+        "Checklist Update Failed",
+        error?.message || "Could not update this checklist task."
+      );
+    }
+  };
 
   const renderChecklistTasksModal = () => {
     if (!showChecklistModal || selectedChecklistTasks.length === 0) return null;
+
     return (
       <div
         style={{
@@ -603,12 +748,33 @@ function BookingPage() {
             padding: "24px"
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #e2e8f0", paddingBottom: "16px", marginBottom: "20px" }}>
-            <h2 style={{ margin: 0, fontSize: "20px", fontWeight: "800", color: "#0f172a" }}>📝 Customer Checklist Tasks</h2>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              borderBottom: "1px solid #e2e8f0",
+              paddingBottom: "16px",
+              marginBottom: "20px"
+            }}
+          >
+            <h2
+              style={{
+                margin: 0,
+                fontSize: "20px",
+                fontWeight: "800",
+                color: "#0f172a"
+              }}
+            >
+              📝 Customer Checklist Tasks
+            </h2>
+
             <button
+              type="button"
               onClick={() => {
                 setShowChecklistModal(false);
                 setSelectedChecklistTasks([]);
+                setSelectedChecklistBooking(null);
               }}
               style={{
                 background: "#f1f5f9",
@@ -623,33 +789,139 @@ function BookingPage() {
               ✕
             </button>
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "14px" }}>
+
+          {selectedChecklistBooking?.bookings?.platform === "Admin Manual" && (
+            <button
+              type="button"
+              onClick={() =>
+                handleCloseManualChecklist(
+                  selectedChecklistBooking.booking_id
+                )
+              }
+              disabled={selectedChecklistTasks.every(
+                (task) => task.manual_admin_completed === true
+              )}
+              style={{
+                marginTop: "12px",
+                marginBottom: "16px",
+                width: "100%",
+                padding: "12px",
+                border: "none",
+                borderRadius: "8px",
+                background:
+                  selectedChecklistTasks.every(
+                    (task) => task.manual_admin_completed === true
+                  )
+                    ? "#94a3b8"
+                    : "#16a34a",
+                color: "#fff",
+                fontWeight: "800",
+                cursor:
+                  selectedChecklistTasks.every(
+                    (task) => task.manual_admin_completed === true
+                  )
+                    ? "not-allowed"
+                    : "pointer"
+              }}
+            >
+              {selectedChecklistTasks.every(
+                (task) => task.manual_admin_completed === true
+              )
+                ? "CHECKLIST CLOSED"
+                : "CLOSE CHECKLIST"}
+            </button>
+          )}
+
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              textAlign: "left",
+              fontSize: "14px"
+            }}
+          >
             <thead>
-              <tr style={{ background: "#f8fafc", borderBottom: "2px solid #e2e8f0" }}>
-                <th style={{ padding: "12px", color: "#64748b" }}>Task Title</th>
-                <th style={{ padding: "12px", color: "#64748b", width: "120px" }}>Status</th>
+              <tr
+                style={{
+                  background: "#f8fafc",
+                  borderBottom: "2px solid #e2e8f0"
+                }}
+              >
+                <th style={{ padding: "12px", color: "#64748b", width: "70px" }}>
+                  Done
+                </th>
+                <th style={{ padding: "12px", color: "#64748b" }}>
+                  Task Title
+                </th>
               </tr>
             </thead>
+
             <tbody>
-              {selectedChecklistTasks.map((t, idx) => (
-                <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: "12px", fontWeight: "600", color: "#1e293b" }}>{t.task_title || "N/A"}</td>
-                  <td style={{ padding: "12px" }}>
-                    <span
+              {selectedChecklistTasks.map((t, idx) => {
+                const isManualBooking =
+                  selectedChecklistBooking?.bookings?.platform === "Admin Manual";
+
+                const isCompleted = isManualBooking
+                  ? t.manual_admin_completed === true
+                  : (
+                      t.customer_completed === true ||
+                      t.customer_completed === "Completed" ||
+                      t.customer_completed === "Yes"
+                    );
+
+                return (
+                  <tr
+                    key={idx}
+                    style={{
+                      borderBottom: "1px solid #f1f5f9",
+                      backgroundColor: isCompleted ? "#f0fdf4" : "#ffffff"
+                    }}
+                  >
+                    <td style={{ padding: "12px", width: "70px", textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={isCompleted}
+                        onChange={() => handleChecklistTaskToggle(idx)}
+                        disabled={
+                          isManualBooking &&
+                          selectedChecklistTasks.every(
+                            (task) =>
+                              task.manual_admin_completed === true
+                          )
+                        }
+                        style={{
+                          width: "20px",
+                          height: "20px",
+                          cursor:
+                            isManualBooking &&
+                            selectedChecklistTasks.every(
+                              (task) =>
+                                task.manual_admin_completed === true
+                            )
+                              ? "not-allowed"
+                              : "pointer",
+                          accentColor: "#16a34a"
+                        }}
+                      />
+                    </td>
+
+                    <td
                       style={{
-                        padding: "4px 8px",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontWeight: "700",
-                        backgroundColor: (t.customer_completed === true || t.customer_completed === "Completed" || t.customer_completed === "Yes") ? "#dcfce7" : "#fef9c3",
-                        color: (t.customer_completed === true || t.customer_completed === "Completed" || t.customer_completed === "Yes") ? "#166534" : "#ca8a04",
+                        padding: "12px",
+                        fontWeight: "600",
+                        color: isCompleted
+                          ? "#166534"
+                          : "#1e293b",
+                        textDecoration: isCompleted
+                          ? "line-through"
+                          : "none"
                       }}
                     >
-                      {(t.customer_completed === true || t.customer_completed === "Completed" || t.customer_completed === "Yes") ? "Completed" : "Pending"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                      {t.task_title || "N/A"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1091,6 +1363,12 @@ function BookingPage() {
   // Track staff response for real-time alerts
   const lastStaffResponse = useRef(null);
 
+  // Partner work-completed alert state
+  const [showWorkCompletedAlert, setShowWorkCompletedAlert] = useState(false);
+  const [workCompletedBooking, setWorkCompletedBooking] = useState(null);
+  const bookingsRef = useRef([]);
+  const alertedCompletedBookings = useRef(new Set());
+
   // Reschedule State
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [reschedulingBooking, setReschedulingBooking] = useState(null);
@@ -1117,6 +1395,119 @@ function BookingPage() {
       fetchAllStaffProfiles();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // REALTIME: Refresh bookings when Partner updates a booking
+useEffect(() => {
+  console.warn("TEST: BOOKINGS REALTIME EFFECT STARTED");
+
+  const channel = supabase
+    .channel("admin-bookings-realtime")
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "bookings",
+      },
+      (payload) => {
+        console.log(
+          "BOOKING REALTIME UPDATE:",
+          payload.eventType,
+          payload.new?.id,
+          payload.new?.work_status
+        );
+
+        fetchBookings(true);
+      }
+    )
+
+    console.warn("TEST: CHANNEL CREATED", channel);
+console.warn("TEST: ABOUT TO SUBSCRIBE");
+
+channel.subscribe((status) => {
+      console.log("Bookings realtime status:", status);
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+  // Keep a current copy of bookings for the separate work-completed alert listener.
+  useEffect(() => {
+    bookingsRef.current = bookings;
+  }, [bookings]);
+
+  // REALTIME ALERT: Notify Admin when Partner changes work_status to COMPLETED.
+  // This listener is intentionally separate from the existing bookings refresh listener.
+  // We do NOT depend on payload.old.work_status because Supabase may not provide
+  // previous row values unless replica identity is configured.
+  useEffect(() => {
+    console.warn("TEST: WORK COMPLETED ALERT REALTIME EFFECT STARTED");
+
+    const channel = supabase
+      .channel("admin-work-completed-alert")
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "bookings",
+        },
+        (payload) => {
+          console.log(
+            "WORK COMPLETED ALERT REALTIME UPDATE:",
+            payload.eventType,
+            payload.new?.id,
+            payload.new?.work_status,
+            payload.new?.platform
+          );
+
+          if (!payload.new?.id) return;
+
+          const bookingId = String(payload.new.id);
+
+          const newStatus = String(payload.new?.work_status || "")
+            .trim()
+            .toUpperCase();
+
+          // Partner completion is the trigger.
+          if (newStatus !== "COMPLETED") return;
+
+          // Prevent the same booking from opening the popup repeatedly
+          // during the current Admin page session.
+          if (alertedCompletedBookings.current.has(bookingId)) {
+            console.log(
+              "WORK COMPLETED ALERT: Already alerted for booking:",
+              bookingId
+            );
+            return;
+          }
+
+          alertedCompletedBookings.current.add(bookingId);
+
+          console.log(
+            "WORK COMPLETED ALERT: SHOWING POPUP FOR BOOKING:",
+            bookingId
+          );
+
+          setWorkCompletedBooking(payload.new);
+          setShowWorkCompletedAlert(true);
+        }
+      )
+      .subscribe((status) => {
+        console.log(
+          "Work completed alert realtime status:",
+          status
+        );
+      });
+
+    return () => {
+      console.warn("TEST: WORK COMPLETED ALERT REALTIME CLEANUP");
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // NEW: Fetch services for manual booking
@@ -1261,6 +1652,86 @@ function BookingPage() {
     });
     setShowAddonDropdown(false);
   };
+  const getManualBookingChecklistItems = (serviceName) => {
+  const name = String(serviceName || "").toLowerCase();
+
+  if (name.includes("bathroom")) {
+    return [
+      "Customer & property details verified",
+      "Floor, tiles, toilet, wash basin & fixtures cleaned",
+      "Mirrors & glass surfaces wiped",
+      "Exhaust fan & switchboards cleaned",
+      "Cobwebs removed",
+      "Final inspection completed & customer satisfied"
+    ];
+  }
+
+  if (name.includes("kitchen")) {
+    return [
+      "Customer & property details verified",
+      "Countertop, hob, sink, cabinets & floor completed",
+      "Chimney exterior wiped",
+      "Appliances exterior wiped",
+      "Exhaust fan & switchboards cleaned",
+      "Final inspection completed & customer satisfied"
+    ];
+  }
+
+  if (name.includes("sofa")) {
+    return [
+      "Customer & property details verified",
+      "Dry vacuuming of sofa completed",
+      "Shampooing and wet vacuuming completed",
+      "Cushions properly cleaned",
+      "Stains spot-treated",
+      "Final inspection completed & customer satisfied"
+    ];
+  }
+
+  if (name.includes("window") || name.includes("door")) {
+    return [
+      "Customer & property details verified",
+      "Window panes & glass cleaned",
+      "Tracks & channels vacuumed/wiped",
+      "Mosquito nets brushed",
+      "Doors & frames wiped",
+      "Final inspection completed & customer satisfied"
+    ];
+  }
+
+  if (name.includes("balcony")) {
+    return [
+      "Customer & property details verified",
+      "Balcony floor scrubbed & washed",
+      "Railings wiped & cleaned",
+      "Cobwebs removed",
+      "Final inspection completed & customer satisfied"
+    ];
+  }
+
+  if (name.includes("express")) {
+    return [
+      "Customer & property details verified",
+      "Dry dusting of all rooms completed",
+      "Floors swept and mopped",
+      "Basic tidying up of living spaces",
+      "Final inspection completed & customer satisfied"
+    ];
+  }
+
+  return [
+    "Customer & property details verified",
+    "Required areas/access confirmed",
+    "Service scope & requirements confirmed",
+    "Cleaning materials & equipment available",
+    "All selected service areas cleaned",
+    "Floors, surfaces & fixtures properly cleaned",
+    "Kitchen, bathrooms & applicable areas completed",
+    "Windows/glass & included tasks completed",
+    "No visible dirt or waste left behind",
+    "Final inspection completed & customer satisfied"
+  ];
+};
   const handleCreateManualBooking = async () => {
     if (
       !manualBookingData.user_name ||
@@ -2003,10 +2474,11 @@ function BookingPage() {
                   };
                 }
 
-                acc[curr.booking_id].tasks.push({
-                  task_title: curr.task_title,
-                  customer_completed: curr.customer_completed
-                });
+              acc[curr.booking_id].tasks.push({
+  task_title: curr.task_title,
+  customer_completed: curr.customer_completed,
+  manual_admin_completed: curr.manual_admin_completed
+});
 
                 return acc;
               }, {})
@@ -5426,6 +5898,145 @@ function BookingPage() {
 
   return (
     <div className="dashboard services-wrapper">
+      {showWorkCompletedAlert && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            backgroundColor: "rgba(15, 23, 42, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 300000,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: "#fff",
+              borderRadius: "18px",
+              padding: "30px",
+              width: "100%",
+              maxWidth: "480px",
+              textAlign: "center",
+              boxShadow: "0 20px 50px rgba(0,0,0,0.25)",
+              position: "relative",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setShowWorkCompletedAlert(false);
+                setWorkCompletedBooking(null);
+              }}
+              style={{
+                position: "absolute",
+                top: "12px",
+                right: "15px",
+                border: "none",
+                background: "#f1f5f9",
+                borderRadius: "50%",
+                width: "32px",
+                height: "32px",
+                cursor: "pointer",
+                fontSize: "18px",
+                fontWeight: "700",
+                color: "#64748b",
+              }}
+            >
+              ×
+            </button>
+
+            <div style={{ fontSize: "42px", marginBottom: "10px" }}>✓</div>
+
+            <h3
+              style={{
+                margin: "0 0 12px",
+                fontSize: "22px",
+                fontWeight: "800",
+                color: "#0f172a",
+              }}
+            >
+              Partner Completed Work
+            </h3>
+
+            <p
+              style={{
+                margin: "0 0 8px",
+                color: "#334155",
+                fontSize: "15px",
+                lineHeight: "1.5",
+              }}
+            >
+              The partner has completed the work. Please complete the user checklist.
+            </p>
+
+            {workCompletedBooking?.id && (
+              <p
+                style={{
+                  margin: "0 0 22px",
+                  color: "#64748b",
+                  fontSize: "13px",
+                }}
+              >
+                Booking ID: {workCompletedBooking.id}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                const completedBookingId = workCompletedBooking?.id;
+
+                // Close the popup first.
+                setShowWorkCompletedAlert(false);
+                setWorkCompletedBooking(null);
+
+                // Explicitly switch to the Customer Checklist tab and persist it.
+                localStorage.setItem("bookingsActiveTab", "customer_checklist");
+                setActiveTab("customer_checklist");
+
+                // Open the exact completed booking checklist automatically.
+                if (completedBookingId) {
+                  const checklist = customerChecklists.find(
+                    (cl) =>
+                      String(cl.booking_id) ===
+                      String(completedBookingId)
+                  );
+
+                  if (checklist) {
+                    setSelectedChecklistTasks(checklist.tasks || []);
+                    setSelectedChecklistBooking(checklist);
+                    setShowChecklistModal(true);
+                  } else {
+                    console.warn(
+                      "Customer checklist not found for completed booking:",
+                      completedBookingId
+                    );
+                  }
+                }
+              }}
+              style={{
+                width: "100%",
+                padding: "12px 20px",
+                border: "none",
+                borderRadius: "10px",
+                backgroundColor: "#16a34a",
+                color: "#fff",
+                fontSize: "15px",
+                fontWeight: "800",
+                cursor: "pointer",
+              }}
+            >
+              COMPLETE USER CHECKLIST
+            </button>
+          </div>
+        </div>
+      )}
+
       {(loading || staffLoading) && <Loader />}
 
       {/* Header with Title and Global Filters */}
@@ -6229,8 +6840,10 @@ function BookingPage() {
                           <>
                             <td>
                               <button
+                                type="button"
                                 onClick={() => {
                                   setSelectedChecklistTasks(cl.tasks);
+                                  setSelectedChecklistBooking(cl);
                                   setShowChecklistModal(true);
                                 }}
                                 style={{
@@ -6249,7 +6862,23 @@ function BookingPage() {
                             </td>
                             <td>
                               <span style={{ fontSize: "13px", fontWeight: "600", color: "#475569" }}>
-                                {cl.tasks.filter(t => (t.customer_completed === true || t.customer_completed === "Completed" || t.customer_completed === "Yes")).length} Completed / {cl.tasks.filter(t => !(t.customer_completed === true || t.customer_completed === "Completed" || t.customer_completed === "Yes")).length} Pending
+                                {cl.tasks.filter((t) =>
+                                  cl.bookings?.platform === "Admin Manual"
+                                    ? t.manual_admin_completed === true
+                                    : (
+                                        t.customer_completed === true ||
+                                        t.customer_completed === "Completed" ||
+                                        t.customer_completed === "Yes"
+                                      )
+                                ).length} Completed / {cl.tasks.filter((t) =>
+                                  cl.bookings?.platform === "Admin Manual"
+                                    ? t.manual_admin_completed !== true
+                                    : !(
+                                        t.customer_completed === true ||
+                                        t.customer_completed === "Completed" ||
+                                        t.customer_completed === "Yes"
+                                      )
+                                ).length} Pending
                               </span>
                             </td>
                           </>
@@ -6263,11 +6892,41 @@ function BookingPage() {
                                   borderRadius: "6px",
                                   fontSize: "12px",
                                   fontWeight: "700",
-                                  backgroundColor: (cl.tasks[0]?.customer_completed === true || cl.tasks[0]?.customer_completed === "Completed" || cl.tasks[0]?.customer_completed === "Yes") ? "#dcfce7" : "#fef9c3",
-                                  color: (cl.tasks[0]?.customer_completed === true || cl.tasks[0]?.customer_completed === "Completed" || cl.tasks[0]?.customer_completed === "Yes") ? "#166534" : "#ca8a04",
+                                  backgroundColor: (
+                                    cl.bookings?.platform === "Admin Manual"
+                                      ? cl.tasks[0]?.manual_admin_completed === true
+                                      : (
+                                          cl.tasks[0]?.customer_completed === true ||
+                                          cl.tasks[0]?.customer_completed === "Completed" ||
+                                          cl.tasks[0]?.customer_completed === "Yes"
+                                        )
+                                  )
+                                    ? "#dcfce7"
+                                    : "#fef9c3",
+                                  color: (
+                                    cl.bookings?.platform === "Admin Manual"
+                                      ? cl.tasks[0]?.manual_admin_completed === true
+                                      : (
+                                          cl.tasks[0]?.customer_completed === true ||
+                                          cl.tasks[0]?.customer_completed === "Completed" ||
+                                          cl.tasks[0]?.customer_completed === "Yes"
+                                        )
+                                  )
+                                    ? "#166534"
+                                    : "#ca8a04",
                                 }}
                               >
-                                {(cl.tasks[0]?.customer_completed === true || cl.tasks[0]?.customer_completed === "Completed" || cl.tasks[0]?.customer_completed === "Yes") ? "Completed" : "Pending"}
+                                {(
+                                  cl.bookings?.platform === "Admin Manual"
+                                    ? cl.tasks[0]?.manual_admin_completed === true
+                                    : (
+                                        cl.tasks[0]?.customer_completed === true ||
+                                        cl.tasks[0]?.customer_completed === "Completed" ||
+                                        cl.tasks[0]?.customer_completed === "Yes"
+                                      )
+                                )
+                                  ? "Completed"
+                                  : "Pending"}
                               </span>
                             </td>
                           </>
@@ -8360,6 +9019,58 @@ function BookingPage() {
                           "Manual booking created:",
                           data
                         );
+                        // Create the service-specific checklist for the manual booking
+const manualService = allServices.find(
+  (s) =>
+    String(s.id) ===
+    String(manualBookingData.service_id)
+);
+
+const manualServiceName =
+  manualService?.title ||
+  manualService?.service_name ||
+  "Service";
+
+const manualChecklistItems =
+  getManualBookingChecklistItems(manualServiceName);
+
+if (data?.booking_row_id && manualChecklistItems.length > 0) {
+  const checklistPayload = manualChecklistItems.map(
+    (taskTitle, index) => ({
+      booking_id: data.booking_row_id,
+      task_index: index,
+      task_title: taskTitle,
+      customer_completed: false,
+      manual_admin_completed: false,
+    })
+  );
+
+  const { error: checklistError } = await supabase
+    .from("booking_checklists")
+    .upsert(checklistPayload, {
+      onConflict: "booking_id,task_index",
+    });
+
+  if (checklistError) {
+    console.error(
+      "Failed to create manual booking checklist:",
+      checklistError
+    );
+
+    throw new Error(
+      "Booking was created, but the manual booking checklist could not be created."
+    );
+  }
+
+  console.log(
+    "Manual booking checklist created:",
+    {
+      booking_id: data.booking_row_id,
+      service: manualServiceName,
+      tasks: manualChecklistItems,
+    }
+  );
+}
 
                         setManualBookingOtp("");
                         setManualBookingRequestId(null);
