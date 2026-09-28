@@ -573,67 +573,204 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
     return entries.sort((a, b) => b[0].localeCompare(a[0]));
   };
   const handleCloseManualChecklist = async (bookingId) => {
-  if (!bookingId) return;
+    if (!bookingId) return;
 
-  const confirmClose = window.confirm(
-    "Are you sure you want to close this manual booking checklist?"
-  );
+    const confirmClose = window.confirm(
+      "Are you sure you want to close this manual booking checklist?"
+    );
 
-  if (!confirmClose) return;
+    if (!confirmClose) return;
 
-  try {
-    const { error } = await supabase
-      .from("booking_checklists")
-      .update({
-        manual_admin_completed: true,
-      })
-      .eq("booking_id", bookingId);
+    try {
+      console.log(
+        "MANUAL CHECKLIST CLOSE STARTED - BOOKING ID:",
+        bookingId
+      );
 
-    if (error) {
+      // STEP 1: Mark all manual checklist tasks as completed.
+      const { error: checklistError } = await supabase
+        .from("booking_checklists")
+        .update({
+          manual_admin_completed: true,
+        })
+        .eq("booking_id", bookingId);
+
+      if (checklistError) {
+        console.error(
+          "Failed to close manual checklist:",
+          checklistError
+        );
+
+        triggerModal(
+          "Checklist Update Failed",
+          checklistError.message ||
+            "Could not close the checklist."
+        );
+        return;
+      }
+
+      console.log(
+        "MANUAL CHECKLIST TASKS COMPLETED:",
+        bookingId
+      );
+
+      // STEP 2: Admin only submits the checklist.
+      // IMPORTANT: Admin MUST NOT change work_status.
+      // work_status remains UNDER_REVIEW until the Partner
+      // clicks COMPLETED in the Partner app.
+      const {
+        data: updatedBooking,
+        error: bookingError,
+      } = await supabase
+        .from("bookings")
+        .update({
+          checklist_submitted: true,
+        })
+        .eq("id", bookingId)
+        .eq("work_status", "UNDER_REVIEW")
+        .select("*")
+        .maybeSingle();
+
+      if (bookingError) {
+        console.error(
+          "MANUAL BOOKING CHECKLIST_SUBMITTED UPDATE ERROR:",
+          bookingError
+        );
+
+        triggerModal(
+          "Booking Update Failed",
+          bookingError.message ||
+            "The checklist was completed, but checklist_submitted could not be saved."
+        );
+        return;
+      }
+
+      if (!updatedBooking) {
+        console.error(
+          "MANUAL BOOKING UPDATE RETURNED NO ROW:",
+          bookingId
+        );
+
+        triggerModal(
+          "Booking Update Failed",
+          "The checklist was completed, but the booking was not updated. Please check the booking ID, work status, and Supabase UPDATE policy."
+        );
+        return;
+      }
+
+      console.log(
+        "MANUAL BOOKING CHECKLIST_SUBMITTED UPDATE SUCCESS:",
+        updatedBooking
+      );
+
+      // STEP 3: Verify the actual database values.
+      const {
+        data: verifiedBooking,
+        error: verifyError,
+      } = await supabase
+        .from("bookings")
+        .select("id, work_status, checklist_submitted")
+        .eq("id", bookingId)
+        .maybeSingle();
+
+      if (verifyError) {
+        console.error(
+          "MANUAL BOOKING VERIFICATION ERROR:",
+          verifyError
+        );
+
+        triggerModal(
+          "Verification Failed",
+          verifyError.message ||
+            "Could not verify the submitted checklist."
+        );
+        return;
+      }
+
+      console.log(
+        "MANUAL BOOKING FINAL DATABASE VALUES:",
+        verifiedBooking
+      );
+
+      // REQUIRED STATE AFTER ADMIN COMPLETES CHECKLIST:
+      // checklist_submitted = TRUE
+      // work_status = UNDER_REVIEW
+      if (
+        !verifiedBooking ||
+        verifiedBooking.checklist_submitted !== true ||
+        String(verifiedBooking.work_status || "")
+          .trim()
+          .toUpperCase() !== "UNDER_REVIEW"
+      ) {
+        console.error(
+          "MANUAL BOOKING FINAL VERIFICATION FAILED:",
+          verifiedBooking
+        );
+
+        triggerModal(
+          "Checklist Submission Failed",
+          "Supabase did not save the required state: checklist_submitted=true and work_status=UNDER_REVIEW."
+        );
+        return;
+      }
+
+      // STEP 4: Update local checklist state.
+      setCustomerChecklists((prev) =>
+        prev.map((cl) =>
+          String(cl.booking_id) === String(bookingId)
+            ? {
+                ...cl,
+                tasks: cl.tasks.map((task) => ({
+                  ...task,
+                  manual_admin_completed: true,
+                })),
+              }
+            : cl
+        )
+      );
+
+      // STEP 5: Update local booking state.
+      // Keep work_status exactly as returned by Supabase.
+      setBookings((prev) =>
+        prev.map((booking) =>
+          String(booking.id) === String(bookingId)
+            ? {
+                ...booking,
+                ...(updatedBooking || {}),
+                checklist_submitted: true,
+                work_status: verifiedBooking.work_status,
+              }
+            : booking
+        )
+      );
+
+      // STEP 6: Close the checklist modal.
+      setShowChecklistModal(false);
+      setSelectedChecklistTasks([]);
+      setSelectedChecklistBooking(null);
+      setShowWorkCompletedAlert(false);
+      setWorkCompletedBooking(null);
+
+      // STEP 7: Refresh Admin bookings from Supabase.
+      await fetchBookings(true);
+
+      triggerModal(
+        "Checklist Submitted",
+        "Manual booking checklist completed successfully. checklist_submitted is TRUE. The booking remains UNDER_REVIEW until the Partner clicks COMPLETED."
+      );
+    } catch (error) {
       console.error(
-        "Failed to close manual checklist:",
+        "Close manual checklist error:",
         error
       );
 
       triggerModal(
-        "Error",
-        "Could not close the checklist."
+        "Checklist Submission Failed",
+        error?.message ||
+          "Could not complete the manual booking checklist."
       );
-
-      return;
     }
-
-    triggerModal(
-      "Checklist Closed",
-      "The manual booking checklist has been closed successfully."
-    );
-
-    setCustomerChecklists((prev) =>
-      prev.map((cl) =>
-        String(cl.booking_id) === String(bookingId)
-          ? {
-              ...cl,
-              tasks: cl.tasks.map((task) => ({
-                ...task,
-                manual_admin_completed: true,
-              })),
-            }
-          : cl
-      )
-    );
-  } catch (error) {
-    console.error(
-      "Close manual checklist error:",
-      error
-    );
-
-    triggerModal(
-      "Error",
-      error?.message ||
-        "Could not close the checklist."
-    );
-  }
-};
+  };
 
   const handleChecklistTaskToggle = async (taskIndex) => {
     if (!selectedChecklistBooking?.booking_id) return;
@@ -666,10 +803,15 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
         .eq("task_index", taskIndex);
 
       if (error) {
-        console.error("Failed to update checklist task:", error);
+        console.error(
+          "Failed to update checklist task:",
+          error
+        );
+
         triggerModal(
           "Checklist Update Failed",
-          "Could not update this checklist task."
+          error.message ||
+            "Could not update this checklist task."
         );
         return;
       }
@@ -680,8 +822,14 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
             ? {
                 ...item,
                 ...(isManualBooking
-                  ? { manual_admin_completed: nextCompleted }
-                  : { customer_completed: nextCompleted }),
+                  ? {
+                      manual_admin_completed:
+                        nextCompleted,
+                    }
+                  : {
+                      customer_completed:
+                        nextCompleted,
+                    }),
               }
             : item
         )
@@ -698,8 +846,14 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
                     ? {
                         ...item,
                         ...(isManualBooking
-                          ? { manual_admin_completed: nextCompleted }
-                          : { customer_completed: nextCompleted }),
+                          ? {
+                              manual_admin_completed:
+                                nextCompleted,
+                            }
+                          : {
+                              customer_completed:
+                                nextCompleted,
+                            }),
                       }
                     : item
                 ),
@@ -708,15 +862,265 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
         )
       );
     } catch (error) {
-      console.error("Checklist task toggle error:", error);
+      console.error(
+        "Checklist task toggle error:",
+        error
+      );
+
       triggerModal(
         "Checklist Update Failed",
-        error?.message || "Could not update this checklist task."
+        error?.message ||
+          "Could not update this checklist task."
       );
     }
   };
 
-  const renderChecklistTasksModal = () => {
+  const handleCompleteUserChecklist = async () => {
+    const bookingId = selectedChecklistBooking?.booking_id;
+
+    if (!bookingId) {
+      triggerModal(
+        "Checklist Error",
+        "The booking ID could not be found."
+      );
+      return;
+    }
+
+    const isManualBooking =
+      selectedChecklistBooking?.bookings?.platform === "Admin Manual";
+
+    // Manual bookings use the separate CLOSE CHECKLIST flow.
+    if (isManualBooking) return;
+
+    // Every normal user checklist task must be completed first.
+    const allCompleted =
+      selectedChecklistTasks.length > 0 &&
+      selectedChecklistTasks.every(
+        (task) =>
+          task.customer_completed === true ||
+          task.customer_completed === "Completed" ||
+          task.customer_completed === "Yes"
+      );
+
+    if (!allCompleted) {
+      triggerModal(
+        "Checklist Incomplete",
+        "Please complete all user checklist tasks before submitting."
+      );
+      return;
+    }
+
+    const confirmSubmit = window.confirm(
+      "Are you sure you want to submit the User Checklist? The booking will remain UNDER_REVIEW until the Partner clicks COMPLETED."
+    );
+
+    if (!confirmSubmit) return;
+
+    try {
+      console.log(
+        "SUBMIT USER CHECKLIST STARTED - BOOKING ID:",
+        bookingId
+      );
+
+      // STEP 1:
+      // Mark every customer checklist row for this booking as completed.
+      const { error: checklistError } = await supabase
+        .from("booking_checklists")
+        .update({
+          customer_completed: true,
+        })
+        .eq("booking_id", bookingId);
+
+      if (checklistError) {
+        console.error(
+          "CHECKLIST UPDATE ERROR:",
+          checklistError
+        );
+
+        triggerModal(
+          "Checklist Submission Failed",
+          checklistError.message ||
+            "Could not update the user checklist."
+        );
+        return;
+      }
+
+      console.log(
+        "CHECKLIST UPDATE SUCCESS - NOW SETTING checklist_submitted=true:",
+        bookingId
+      );
+
+      // STEP 2:
+      // IMPORTANT FLOW:
+      // Partner already changed work_status to UNDER_REVIEW.
+      // Admin only sets checklist_submitted = true.
+      // Admin MUST NOT change work_status to COMPLETED.
+      const { data: updatedBooking, error: bookingError } =
+        await supabase
+          .from("bookings")
+          .update({
+            checklist_submitted: true,
+          })
+          .eq("id", bookingId)
+          .select("*")
+          .maybeSingle();
+
+      if (bookingError) {
+        console.error(
+          "BOOKINGS TABLE CHECKLIST SUBMISSION ERROR:",
+          bookingError
+        );
+
+        triggerModal(
+          "Booking Update Failed",
+          bookingError.message ||
+            "The user checklist was updated, but checklist_submitted could not be saved."
+        );
+        return;
+      }
+
+      // IMPORTANT:
+      // If Supabase RLS/policies prevented the update, no row may be returned.
+      if (!updatedBooking) {
+        console.error(
+          "BOOKINGS TABLE UPDATE RETURNED NO ROW. CHECK RLS UPDATE POLICY AND BOOKING ID:",
+          bookingId
+        );
+
+        triggerModal(
+          "Booking Update Failed",
+          "The booking was not updated. Please check the Supabase UPDATE policy for the bookings table."
+        );
+        return;
+      }
+
+      console.log(
+        "BOOKINGS TABLE CHECKLIST SUBMISSION SUCCESS:",
+        updatedBooking
+      );
+
+      // STEP 3:
+      // Verify the required intermediate state:
+      // checklist_submitted = true
+      // work_status = UNDER_REVIEW
+      const { data: verifiedBooking, error: verifyError } =
+        await supabase
+          .from("bookings")
+          .select("id, work_status, checklist_submitted")
+          .eq("id", bookingId)
+          .maybeSingle();
+
+      if (verifyError) {
+        console.error(
+          "BOOKING VERIFICATION ERROR:",
+          verifyError
+        );
+
+        triggerModal(
+          "Booking Verification Failed",
+          verifyError.message ||
+            "The checklist was submitted, but the booking state could not be verified."
+        );
+        return;
+      }
+
+      console.log(
+        "BOOKING AFTER CUSTOMER CHECKLIST SUBMISSION:",
+        verifiedBooking
+      );
+
+      const verifiedStatus = String(
+        verifiedBooking?.work_status || ""
+      )
+        .trim()
+        .toUpperCase();
+
+      if (!verifiedBooking || verifiedBooking.checklist_submitted !== true) {
+        console.error(
+          "CHECKLIST SUBMISSION VERIFICATION FAILED:",
+          verifiedBooking
+        );
+
+        triggerModal(
+          "Checklist Submission Failed",
+          "Supabase did not save checklist_submitted=true."
+        );
+        return;
+      }
+
+      // The expected flow is UNDER_REVIEW at this point.
+      // Do not force the status here. If the Partner has already changed it
+      // concurrently, keep the actual database value instead of overwriting it.
+      if (verifiedStatus !== "UNDER_REVIEW") {
+        console.warn(
+          "EXPECTED work_status=UNDER_REVIEW AFTER CHECKLIST SUBMISSION, BUT DATABASE HAS:",
+          verifiedBooking.work_status
+        );
+      }
+
+      // STEP 4: Update the local checklist state.
+      const updatedTasks = selectedChecklistTasks.map((task) => ({
+        ...task,
+        customer_completed: true,
+      }));
+
+      setSelectedChecklistTasks(updatedTasks);
+
+      setCustomerChecklists((prev) =>
+        prev.map((cl) =>
+          String(cl.booking_id) === String(bookingId)
+            ? {
+                ...cl,
+                tasks: updatedTasks,
+              }
+            : cl
+        )
+      );
+
+      // STEP 5: Update the local booking state using the ACTUAL database row.
+      // This keeps work_status UNDER_REVIEW until the Partner clicks COMPLETED.
+      setBookings((prev) =>
+        prev.map((booking) =>
+          String(booking.id) === String(bookingId)
+            ? {
+                ...booking,
+                ...(updatedBooking || {}),
+                checklist_submitted: true,
+              }
+            : booking
+        )
+      );
+
+      // STEP 6: Close the checklist and the Partner-completed popup.
+      setShowChecklistModal(false);
+      setSelectedChecklistTasks([]);
+      setSelectedChecklistBooking(null);
+      setShowWorkCompletedAlert(false);
+      setWorkCompletedBooking(null);
+
+      // STEP 7: Refresh bookings from Supabase.
+      await fetchBookings(true);
+
+      triggerModal(
+        "Checklist Submitted",
+        "Customer checklist submitted successfully. The booking remains UNDER_REVIEW. The Partner can now click COMPLETED."
+      );
+    } catch (error) {
+      console.error(
+        "SUBMIT USER CHECKLIST ERROR:",
+        error
+      );
+
+      triggerModal(
+        "Checklist Submission Failed",
+        error?.message ||
+          "Could not submit the user checklist."
+      );
+    }
+  };
+
+  
+const renderChecklistTasksModal = () => {
     if (!showChecklistModal || selectedChecklistTasks.length === 0) return null;
 
     return (
@@ -821,7 +1225,7 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
                     (task) => task.manual_admin_completed === true
                   )
                     ? "not-allowed"
-                    : "pointer"
+                    : "pointer",
               }}
             >
               {selectedChecklistTasks.every(
@@ -829,6 +1233,54 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
               )
                 ? "CHECKLIST CLOSED"
                 : "CLOSE CHECKLIST"}
+            </button>
+          )}
+
+          {selectedChecklistBooking?.bookings?.platform !== "Admin Manual" && (
+            <button
+              type="button"
+              onClick={handleCompleteUserChecklist}
+              disabled={
+                selectedChecklistTasks.length === 0 ||
+                !selectedChecklistTasks.every(
+                  (task) =>
+                    task.customer_completed === true ||
+                    task.customer_completed === "Completed" ||
+                    task.customer_completed === "Yes"
+                )
+              }
+              style={{
+                marginTop: "12px",
+                marginBottom: "16px",
+                width: "100%",
+                padding: "12px",
+                border: "none",
+                borderRadius: "8px",
+                background:
+                  selectedChecklistTasks.length > 0 &&
+                  selectedChecklistTasks.every(
+                    (task) =>
+                      task.customer_completed === true ||
+                      task.customer_completed === "Completed" ||
+                      task.customer_completed === "Yes"
+                  )
+                    ? "#16a34a"
+                    : "#94a3b8",
+                color: "#fff",
+                fontWeight: "800",
+                cursor:
+                  selectedChecklistTasks.length > 0 &&
+                  selectedChecklistTasks.every(
+                    (task) =>
+                      task.customer_completed === true ||
+                      task.customer_completed === "Completed" ||
+                      task.customer_completed === "Yes"
+                  )
+                    ? "pointer"
+                    : "not-allowed",
+              }}
+            >
+              SUBMIT USER CHECKLIST
             </button>
           )}
 
@@ -1440,12 +1892,41 @@ channel.subscribe((status) => {
     bookingsRef.current = bookings;
   }, [bookings]);
 
-  // REALTIME ALERT: Notify Admin when Partner changes work_status to COMPLETED.
-  // This listener is intentionally separate from the existing bookings refresh listener.
-  // We do NOT depend on payload.old.work_status because Supabase may not provide
-  // previous row values unless replica identity is configured.
+  // REALTIME ALERT: Notify Admin when Partner changes work_status to UNDER_REVIEW.
+  // The normal bookings realtime listener above remains unchanged.
+  // This separate listener is responsible only for the popup.
   useEffect(() => {
     console.warn("TEST: WORK COMPLETED ALERT REALTIME EFFECT STARTED");
+
+    const showUnderReviewPopup = (booking) => {
+      if (!booking?.id) return;
+
+      const bookingId = String(booking.id);
+
+      const newStatus = String(booking?.work_status || "")
+        .trim()
+        .toUpperCase();
+
+      if (newStatus !== "UNDER_REVIEW") return;
+
+      if (alertedCompletedBookings.current.has(bookingId)) {
+        console.log(
+          "WORK COMPLETED ALERT: Already alerted for booking:",
+          bookingId
+        );
+        return;
+      }
+
+      alertedCompletedBookings.current.add(bookingId);
+
+      console.log(
+        "WORK COMPLETED ALERT: SHOWING POPUP FOR BOOKING:",
+        bookingId
+      );
+
+      setWorkCompletedBooking(booking);
+      setShowWorkCompletedAlert(true);
+    };
 
     const channel = supabase
       .channel("admin-work-completed-alert")
@@ -1465,36 +1946,7 @@ channel.subscribe((status) => {
             payload.new?.platform
           );
 
-          if (!payload.new?.id) return;
-
-          const bookingId = String(payload.new.id);
-
-          const newStatus = String(payload.new?.work_status || "")
-            .trim()
-            .toUpperCase();
-
-          // Partner completion is the trigger.
-          if (newStatus !== "COMPLETED") return;
-
-          // Prevent the same booking from opening the popup repeatedly
-          // during the current Admin page session.
-          if (alertedCompletedBookings.current.has(bookingId)) {
-            console.log(
-              "WORK COMPLETED ALERT: Already alerted for booking:",
-              bookingId
-            );
-            return;
-          }
-
-          alertedCompletedBookings.current.add(bookingId);
-
-          console.log(
-            "WORK COMPLETED ALERT: SHOWING POPUP FOR BOOKING:",
-            bookingId
-          );
-
-          setWorkCompletedBooking(payload.new);
-          setShowWorkCompletedAlert(true);
+          showUnderReviewPopup(payload.new);
         }
       )
       .subscribe((status) => {
@@ -1504,8 +1956,61 @@ channel.subscribe((status) => {
         );
       });
 
+    // IMPORTANT:
+    // If the partner changed the booking to UNDER_REVIEW before
+    // the Admin page was opened/refreshed, realtime will not replay
+    // that old event. Therefore check the current database state once.
+    const checkExistingUnderReviewBookings = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("bookings")
+          .select("*")
+          .ilike("work_status", "UNDER_REVIEW")
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error(
+            "Failed to check existing UNDER_REVIEW bookings:",
+            error
+          );
+          return;
+        }
+
+        console.log(
+          "EXISTING UNDER_REVIEW BOOKINGS:",
+          data
+        );
+
+        if (data && data.length > 0) {
+          // Show the latest UNDER_REVIEW booking that has not
+          // already been alerted during this Admin page session.
+          const pendingBooking = data.find(
+            (booking) =>
+              booking?.id &&
+              !alertedCompletedBookings.current.has(
+                String(booking.id)
+              )
+          );
+
+          if (pendingBooking) {
+            showUnderReviewPopup(pendingBooking);
+          }
+        }
+      } catch (error) {
+        console.error(
+          "UNDER_REVIEW booking check error:",
+          error
+        );
+      }
+    };
+
+    checkExistingUnderReviewBookings();
+
     return () => {
-      console.warn("TEST: WORK COMPLETED ALERT REALTIME CLEANUP");
+      console.warn(
+        "TEST: WORK COMPLETED ALERT REALTIME CLEANUP"
+      );
+
       supabase.removeChannel(channel);
     };
   }, []);
@@ -1733,19 +2238,20 @@ channel.subscribe((status) => {
   ];
 };
   const handleCreateManualBooking = async () => {
-    if (
-      !manualBookingData.user_name ||
-      !manualBookingData.user_phone ||
-      !manualBookingData.service_id ||
-      !manualBookingData.booking_date ||
-      !manualBookingData.booking_time
-    ) {
-      triggerModal(
-        "Incomplete Data",
-        "Please fill in all required fields including Date and Time."
-      );
-      return;
-    }
+  if (
+  !String(manualBookingData.user_name || "").trim() ||
+  !String(manualBookingData.user_phone || "").trim() ||
+  !String(manualBookingData.address || "").trim() ||
+  !String(manualBookingData.service_id || "").trim() ||
+  !String(manualBookingData.booking_date || "").trim() ||
+  !String(manualBookingData.booking_time || "").trim()
+) {
+  triggerModal(
+    "Incomplete Data",
+    "Please enter all required fields, including Address, Date, and Time."
+  );
+  return;
+}
 
     if (
       !validateManualBookingTime(
@@ -5953,15 +6459,15 @@ channel.subscribe((status) => {
             <div style={{ fontSize: "42px", marginBottom: "10px" }}>✓</div>
 
             <h3
-              style={{
-                margin: "0 0 12px",
-                fontSize: "22px",
-                fontWeight: "800",
-                color: "#0f172a",
-              }}
-            >
-              Partner Completed Work
-            </h3>
+  style={{
+    margin: "0 0 12px",
+    fontSize: "22px",
+    fontWeight: "800",
+    color: "#0f172a",
+  }}
+>
+  Partner Completed Work
+</h3>
 
             <p
               style={{
@@ -5988,35 +6494,126 @@ channel.subscribe((status) => {
 
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 const completedBookingId = workCompletedBooking?.id;
 
                 // Close the popup first.
                 setShowWorkCompletedAlert(false);
                 setWorkCompletedBooking(null);
 
-                // Explicitly switch to the Customer Checklist tab and persist it.
+                if (!completedBookingId) {
+                  triggerModal(
+                    "Checklist Error",
+                    "The completed booking ID could not be found."
+                  );
+                  return;
+                }
+
+                // Always navigate to Customer Checklist.
                 localStorage.setItem("bookingsActiveTab", "customer_checklist");
                 setActiveTab("customer_checklist");
 
-                // Open the exact completed booking checklist automatically.
-                if (completedBookingId) {
-                  const checklist = customerChecklists.find(
-                    (cl) =>
-                      String(cl.booking_id) ===
-                      String(completedBookingId)
-                  );
+                try {
+                  // Fetch the exact booking checklist directly from Supabase.
+                  // Use select("*") because the checklist table is already known
+                  // to work with this Admin app and this avoids failing if an
+                  // optional column is not present in the LIVE database schema.
+                  const { data: checklistRows, error: checklistError } =
+                    await supabase
+                      .from("booking_checklists")
+                      .select("*")
+                      .eq("booking_id", completedBookingId);
 
-                  if (checklist) {
-                    setSelectedChecklistTasks(checklist.tasks || []);
-                    setSelectedChecklistBooking(checklist);
-                    setShowChecklistModal(true);
-                  } else {
-                    console.warn(
-                      "Customer checklist not found for completed booking:",
-                      completedBookingId
+                  if (checklistError) {
+                    console.error(
+                      "Failed to fetch completed booking checklist:",
+                      checklistError
                     );
+                    triggerModal(
+                      "Checklist Error",
+                      "Could not load the user checklist for this completed booking."
+                    );
+                    return;
                   }
+
+                  if (!checklistRows || checklistRows.length === 0) {
+                    triggerModal(
+                      "Checklist Not Found",
+                      "The booking was completed, but its user checklist was not found."
+                    );
+                    return;
+                  }
+
+                  const currentBooking =
+                    bookingsRef.current.find(
+                      (booking) =>
+                        String(booking.id) === String(completedBookingId) ||
+                        String(booking.booking_id) === String(completedBookingId)
+                    ) ||
+                    workCompletedBooking || { id: completedBookingId };
+
+                  // Keep the exact task order used by the checklist table.
+                  // If task_index exists, use it; otherwise preserve the DB order.
+                  const orderedChecklistRows = [...checklistRows].sort((a, b) => {
+                    const aIndex = Number(a?.task_index);
+                    const bIndex = Number(b?.task_index);
+
+                    if (Number.isNaN(aIndex) || Number.isNaN(bIndex)) return 0;
+                    return aIndex - bIndex;
+                  });
+
+                  const checklist = {
+                    booking_id: completedBookingId,
+                    created_at:
+                      orderedChecklistRows[0]?.created_at ||
+                      currentBooking?.created_at ||
+                      null,
+                    bookings: currentBooking,
+                    tasks: orderedChecklistRows.map((task, index) => ({
+                      task_index:
+                        task?.task_index !== undefined &&
+                        task?.task_index !== null
+                          ? task.task_index
+                          : index,
+                      task_title: task.task_title,
+                      customer_completed: task.customer_completed,
+                      manual_admin_completed: task.manual_admin_completed,
+                    })),
+                  };
+
+                  // Keep the Customer Checklist table and modal in sync.
+                  setCustomerChecklists((prev) => {
+                    const exists = prev.some(
+                      (item) =>
+                        String(item.booking_id) ===
+                        String(completedBookingId)
+                    );
+
+                    if (exists) {
+                      return prev.map((item) =>
+                        String(item.booking_id) ===
+                        String(completedBookingId)
+                          ? checklist
+                          : item
+                      );
+                    }
+
+                    return [checklist, ...prev];
+                  });
+
+                  setSelectedChecklistBooking(checklist);
+                  setSelectedChecklistTasks(checklist.tasks);
+                  setShowChecklistModal(true);
+                } catch (error) {
+                  console.error(
+                    "Open completed booking checklist error:",
+                    error
+                  );
+                  triggerModal(
+                    "Checklist Error",
+                    error?.message ||
+                      "Could not open the user checklist."
+                  );
                 }
               }}
               style={{
@@ -9535,4 +10132,3 @@ if (data?.booking_row_id && manualChecklistItems.length > 0) {
 }
 
 export default BookingPage;
-
