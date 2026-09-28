@@ -3883,8 +3883,18 @@ channel.subscribe((status) => {
     b.assigned_staff_email && b.staff_response?.trim()?.toUpperCase() === "PENDING"
   );
 
+  // BOOKINGS WAITING FOR PARTNER COMPLETION / ADMIN CHECKLIST
+  // These must NOT appear in Unassigned.
+  const underReviewBookings = bookings.filter((b) =>
+    b.work_status?.trim()?.toUpperCase() === "UNDER_REVIEW" &&
+    !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(
+      b.refund_status
+    )
+  );
+
   const unassignedBookings = bookings.filter((b) =>
     b.work_status?.toUpperCase() !== "ASSIGNED" &&
+    b.work_status?.toUpperCase() !== "UNDER_REVIEW" &&
     b.work_status?.toLowerCase() !== "cancelled" &&
     !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(b.refund_status) &&
     b.work_status?.toLowerCase() !== "completed" &&
@@ -3936,6 +3946,9 @@ channel.subscribe((status) => {
       } else if (tab === "assigned") {
         timeA = new Date(a.assigned_at || a.created_at).getTime();
         timeB = new Date(b.assigned_at || b.created_at).getTime();
+      } else if (tab === "under_review") {
+        timeA = new Date(a.updated_at || a.created_at).getTime();
+        timeB = new Date(b.updated_at || b.created_at).getTime();
       } else {
         timeA = new Date(a.created_at).getTime();
         timeB = new Date(b.created_at).getTime();
@@ -3951,6 +3964,8 @@ channel.subscribe((status) => {
         ? getSortedList(applyFilters(unassignedBookings), "unassigned")
         : activeTab === "assigned"
           ? getSortedList(applyFilters(assignedBookings), "assigned")
+          : activeTab === "under_review"
+            ? getSortedList(applyFilters(underReviewBookings), "under_review")
           : activeTab === "rejected"
             ? getSortedList(applyFilters(rejectedBookings), "rejected")
             : activeTab === "waiting"
@@ -6881,6 +6896,16 @@ channel.subscribe((status) => {
             onClick={() => setActiveTab("assigned")}
           >
             Assigned ({assignedBookings.length})
+          </span>
+          <span
+            className={activeTab === "under_review" ? "active" : ""}
+            onClick={() => {
+              setActiveTab("under_review");
+              setCurrentPage(1);
+              localStorage.setItem("bookingsActiveTab", "under_review");
+            }}
+          >
+            Under Review ({underReviewBookings.length})
           </span>
           <span
             className={activeTab === "completed" ? "active" : ""}
