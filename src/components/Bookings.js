@@ -6510,7 +6510,31 @@ channel.subscribe((status) => {
             <button
               type="button"
               onClick={async () => {
-                const completedBookingId = workCompletedBooking?.id;
+                /*
+                 * PARTNER COMPLETED WORK -> OPEN EXACT USER CHECKLIST
+                 *
+                 * Important:
+                 * Some completed bookings may not have a row in
+                 * booking_checklists yet. In that case, create the
+                 * checklist from the same service-based checklist
+                 * definitions already used for manual bookings.
+                 */
+
+                const completedBookingId =
+                  workCompletedBooking?.id ||
+                  workCompletedBooking?.booking_id;
+
+                console.log(
+                  "========== COMPLETED BOOKING CHECKLIST DEBUG =========="
+                );
+                console.log(
+                  "workCompletedBooking:",
+                  workCompletedBooking
+                );
+                console.log(
+                  "completedBookingId:",
+                  completedBookingId
+                );
 
                 // Close the popup first.
                 setShowWorkCompletedAlert(false);
@@ -6525,78 +6549,307 @@ channel.subscribe((status) => {
                 }
 
                 // Always navigate to Customer Checklist.
-                localStorage.setItem("bookingsActiveTab", "customer_checklist");
+                localStorage.setItem(
+                  "bookingsActiveTab",
+                  "customer_checklist"
+                );
                 setActiveTab("customer_checklist");
 
                 try {
-                  // Fetch the exact booking checklist directly from Supabase.
-                  // Use select("*") because the checklist table is already known
-                  // to work with this Admin app and this avoids failing if an
-                  // optional column is not present in the LIVE database schema.
-                  const { data: checklistRows, error: checklistError } =
-                    await supabase
-                      .from("booking_checklists")
-                      .select("*")
-                      .eq("booking_id", completedBookingId);
+                  /*
+                   * STEP 1:
+                   * Fetch the exact booking from Supabase.
+                   * This avoids depending only on the realtime payload.
+                   */
+                  const {
+                    data: exactBooking,
+                    error: bookingFetchError,
+                  } = await supabase
+                    .from("bookings")
+                    .select("*")
+                    .eq("id", completedBookingId)
+                    .maybeSingle();
+
+                  if (bookingFetchError) {
+                    console.error(
+                      "Failed to fetch exact completed booking:",
+                      bookingFetchError
+                    );
+
+                    triggerModal(
+                      "Checklist Error",
+                      bookingFetchError.message ||
+                        "Could not fetch the completed booking."
+                    );
+                    return;
+                  }
+
+                  const currentBooking =
+                    exactBooking ||
+                    bookingsRef.current.find(
+                      (booking) =>
+                        String(booking.id) ===
+                          String(completedBookingId) ||
+                        String(booking.booking_id) ===
+                          String(completedBookingId)
+                    ) ||
+                    workCompletedBooking || {
+                      id: completedBookingId,
+                    };
+
+                  console.log(
+                    "EXACT COMPLETED BOOKING:",
+                    currentBooking
+                  );
+
+                  /*
+                   * STEP 2:
+                   * Fetch the checklist for this exact booking.
+                   */
+                  const {
+                    data: fetchedChecklistRows,
+                    error: checklistError,
+                  } = await supabase
+                    .from("booking_checklists")
+                    .select("*")
+                    .eq("booking_id", completedBookingId);
 
                   if (checklistError) {
                     console.error(
                       "Failed to fetch completed booking checklist:",
                       checklistError
                     );
+
                     triggerModal(
                       "Checklist Error",
-                      "Could not load the user checklist for this completed booking."
+                      checklistError.message ||
+                        "Could not load the user checklist for this completed booking."
                     );
                     return;
                   }
 
-                  if (!checklistRows || checklistRows.length === 0) {
-                    triggerModal(
-                      "Checklist Not Found",
-                      "The booking was completed, but its user checklist was not found."
-                    );
-                    return;
+                  let checklistRows =
+                    fetchedChecklistRows || [];
+
+                  /*
+                   * STEP 3:
+                   * If the checklist is missing, first check the
+                   * already-loaded Customer Checklist state.
+                   */
+                  if (checklistRows.length === 0) {
+                    const existingLocalChecklist =
+                      customerChecklists.find(
+                        (item) =>
+                          String(item.booking_id) ===
+                          String(completedBookingId)
+                      );
+
+                    if (
+                      existingLocalChecklist?.tasks &&
+                      existingLocalChecklist.tasks.length > 0
+                    ) {
+                      console.log(
+                        "Using existing local Customer Checklist:",
+                        existingLocalChecklist
+                      );
+
+                      checklistRows =
+                        existingLocalChecklist.tasks.map(
+                          (task, index) => ({
+                            task_index:
+                              task?.task_index !==
+                                undefined &&
+                              task?.task_index !== null
+                                ? task.task_index
+                                : index,
+                            task_title:
+                              task?.task_title ||
+                              "Checklist Task",
+                            customer_completed:
+                              task?.customer_completed ===
+                              true ||
+                              task?.customer_completed ===
+                                "Completed" ||
+                              task?.customer_completed ===
+                                "Yes",
+                            manual_admin_completed:
+                              task?.manual_admin_completed ===
+                              true,
+                          })
+                        );
+                    }
                   }
 
-                  const currentBooking =
-                    bookingsRef.current.find(
-                      (booking) =>
-                        String(booking.id) === String(completedBookingId) ||
-                        String(booking.booking_id) === String(completedBookingId)
-                    ) ||
-                    workCompletedBooking || { id: completedBookingId };
+                  /*
+                   * STEP 4:
+                   * If there is still no checklist, create it now.
+                   *
+                   * The existing service-specific function is reused so
+                   * the task names remain consistent with the rest of
+                   * this Admin application.
+                   */
+                  if (checklistRows.length === 0) {
+                    const serviceName =
+                      currentBooking?.services?.[0]?.title ||
+                      currentBooking?.services?.[0]?.service_name ||
+                      currentBooking?.service_name ||
+                      currentBooking?.service_type ||
+                      currentBooking?.service ||
+                      "Service";
 
-                  // Keep the exact task order used by the checklist table.
-                  // If task_index exists, use it; otherwise preserve the DB order.
-                  const orderedChecklistRows = [...checklistRows].sort((a, b) => {
-                    const aIndex = Number(a?.task_index);
-                    const bIndex = Number(b?.task_index);
+                    const generatedChecklistItems =
+                      getManualBookingChecklistItems(
+                        serviceName
+                      );
 
-                    if (Number.isNaN(aIndex) || Number.isNaN(bIndex)) return 0;
-                    return aIndex - bIndex;
-                  });
+                    console.log(
+                      "CHECKLIST MISSING - CREATING CHECKLIST:",
+                      {
+                        bookingId:
+                          completedBookingId,
+                        serviceName,
+                        generatedChecklistItems,
+                      }
+                    );
+
+                    if (
+                      !generatedChecklistItems ||
+                      generatedChecklistItems.length === 0
+                    ) {
+                      triggerModal(
+                        "Checklist Not Found",
+                        "No checklist tasks are available for this service."
+                      );
+                      return;
+                    }
+
+                    const checklistPayload =
+                      generatedChecklistItems.map(
+                        (taskTitle, index) => ({
+                          booking_id:
+                            completedBookingId,
+                          task_index: index,
+                          task_title: taskTitle,
+                          customer_completed: false,
+                          manual_admin_completed: false,
+                        })
+                      );
+
+                    const {
+                      data: createdChecklistRows,
+                      error:
+                        createChecklistError,
+                    } = await supabase
+                      .from("booking_checklists")
+                      .upsert(checklistPayload, {
+                        onConflict:
+                          "booking_id,task_index",
+                      })
+                      .select("*");
+
+                    if (createChecklistError) {
+                      console.error(
+                        "Failed to create missing booking checklist:",
+                        createChecklistError
+                      );
+
+                      triggerModal(
+                        "Checklist Creation Failed",
+                        createChecklistError.message ||
+                          "The booking is completed, but its user checklist could not be created."
+                      );
+                      return;
+                    }
+
+                    checklistRows =
+                      createdChecklistRows ||
+                      checklistPayload;
+
+                    console.log(
+                      "MISSING CHECKLIST CREATED SUCCESSFULLY:",
+                      checklistRows
+                    );
+                  }
+
+                  /*
+                   * STEP 5:
+                   * Sort tasks by task_index and build the exact
+                   * checklist object expected by the modal.
+                   */
+                  const orderedChecklistRows =
+                    [...checklistRows].sort(
+                      (a, b) => {
+                        const aIndex = Number(
+                          a?.task_index
+                        );
+                        const bIndex = Number(
+                          b?.task_index
+                        );
+
+                        if (
+                          Number.isNaN(aIndex) ||
+                          Number.isNaN(bIndex)
+                        ) {
+                          return 0;
+                        }
+
+                        return aIndex - bIndex;
+                      }
+                    );
 
                   const checklist = {
-                    booking_id: completedBookingId,
+                    booking_id:
+                      completedBookingId,
+
                     created_at:
-                      orderedChecklistRows[0]?.created_at ||
+                      orderedChecklistRows[0]
+                        ?.created_at ||
+                      orderedChecklistRows[0]
+                        ?.updated_at ||
                       currentBooking?.created_at ||
                       null,
+
                     bookings: currentBooking,
-                    tasks: orderedChecklistRows.map((task, index) => ({
-                      task_index:
-                        task?.task_index !== undefined &&
-                        task?.task_index !== null
-                          ? task.task_index
-                          : index,
-                      task_title: task.task_title,
-                      customer_completed: task.customer_completed,
-                      manual_admin_completed: task.manual_admin_completed,
-                    })),
+
+                    tasks:
+                      orderedChecklistRows.map(
+                        (task, index) => ({
+                          task_index:
+                            task?.task_index !==
+                              undefined &&
+                            task?.task_index !== null
+                              ? task.task_index
+                              : index,
+
+                          task_title:
+                            task?.task_title ||
+                            "Checklist Task",
+
+                          customer_completed:
+                            task?.customer_completed ===
+                              true ||
+                            task?.customer_completed ===
+                              "Completed" ||
+                            task?.customer_completed ===
+                              "Yes",
+
+                          manual_admin_completed:
+                            task?.manual_admin_completed ===
+                            true,
+                        })
+                      ),
                   };
 
-                  // Keep the Customer Checklist table and modal in sync.
+                  console.log(
+                    "FINAL CHECKLIST OPENING:",
+                    checklist
+                  );
+
+                  /*
+                   * STEP 6:
+                   * Keep the Customer Checklist table and modal
+                   * synchronized.
+                   */
                   setCustomerChecklists((prev) => {
                     const exists = prev.some(
                       (item) =>
@@ -6613,17 +6866,27 @@ channel.subscribe((status) => {
                       );
                     }
 
-                    return [checklist, ...prev];
+                    return [
+                      checklist,
+                      ...prev,
+                    ];
                   });
 
-                  setSelectedChecklistBooking(checklist);
-                  setSelectedChecklistTasks(checklist.tasks);
+                  setSelectedChecklistBooking(
+                    checklist
+                  );
+
+                  setSelectedChecklistTasks(
+                    checklist.tasks
+                  );
+
                   setShowChecklistModal(true);
                 } catch (error) {
                   console.error(
                     "Open completed booking checklist error:",
                     error
                   );
+
                   triggerModal(
                     "Checklist Error",
                     error?.message ||
