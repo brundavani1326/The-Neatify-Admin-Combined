@@ -1723,6 +1723,15 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
   const [workCompletedBooking, setWorkCompletedBooking] = useState(null);
   const bookingsRef = useRef([]);
   const alertedCompletedBookings = useRef(new Set());
+  // Prevent a manually closed popup from immediately reopening while the
+  // booking is still UNDER_REVIEW. This is reset when checklist_submitted
+  // changes back to false / the booking returns to UNDER_REVIEW.
+  const dismissedWorkCompletedBookings = useRef(new Set());
+
+  // Keep the last booking status/checklist value seen by the Admin alert logic.
+  // This lets us detect a real true -> false checklist reset even when
+  // Supabase realtime does not provide the previous row values.
+  const lastKnownBookingAlertState = useRef(new Map());
 
   // Reschedule State
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
@@ -1795,9 +1804,10 @@ channel.subscribe((status) => {
     bookingsRef.current = bookings;
   }, [bookings]);
 
-  // REALTIME ALERT: Notify Admin when Partner changes work_status to UNDER_REVIEW.
-  // The normal bookings realtime listener above remains unchanged.
-  // This separate listener is responsible only for the popup.
+  // REALTIME ALERT:
+  // 1. Show popup when a booking enters UNDER_REVIEW.
+  // 2. Show popup again when checklist_submitted changes TRUE -> FALSE.
+  // 3. Do not reopen a popup after Admin clicks CLOSE until a new alert cycle.
   useEffect(() => {
     console.warn("TEST: WORK COMPLETED ALERT REALTIME EFFECT STARTED");
 
@@ -1810,7 +1820,24 @@ channel.subscribe((status) => {
         .trim()
         .toUpperCase();
 
+      const checklistIsSubmitted =
+        booking?.checklist_submitted === true;
+
+      // Popup is only for bookings currently waiting for Admin review.
       if (newStatus !== "UNDER_REVIEW") return;
+
+      // If checklist is already submitted, there is nothing for Admin
+      // to review again.
+      if (checklistIsSubmitted) return;
+
+      // Do not immediately reopen after Admin manually closes the popup.
+      if (dismissedWorkCompletedBookings.current.has(bookingId)) {
+        console.log(
+          "WORK COMPLETED ALERT: Popup dismissed for booking:",
+          bookingId
+        );
+        return;
+      }
 
       if (alertedCompletedBookings.current.has(bookingId)) {
         console.log(
@@ -1841,13 +1868,84 @@ channel.subscribe((status) => {
           table: "bookings",
         },
         (payload) => {
+          const changedBookingId = String(payload.new?.id || "");
+          if (!changedBookingId) return;
+
+          const newStatus = String(payload.new?.work_status || "")
+            .trim()
+            .toUpperCase();
+
+          const newChecklistSubmitted =
+            payload.new?.checklist_submitted === true;
+
+          // Prefer the alert listener's own state. If it is not available
+          // yet, use the current bookings state as the previous value.
+          const previousAlertState =
+            lastKnownBookingAlertState.current.get(changedBookingId);
+
+          const previousBooking =
+            bookingsRef.current.find(
+              (booking) =>
+                String(booking.id) === changedBookingId
+            );
+
+          const previousStatus = String(
+            previousAlertState?.work_status ??
+              previousBooking?.work_status ??
+              ""
+          )
+            .trim()
+            .toUpperCase();
+
+          const previousChecklistSubmitted =
+            previousAlertState?.checklist_submitted ??
+            (previousBooking?.checklist_submitted === true);
+
           console.log(
             "WORK COMPLETED ALERT REALTIME UPDATE:",
             payload.eventType,
-            payload.new?.id,
-            payload.new?.work_status,
-            payload.new?.platform
+            changedBookingId,
+            "NEW STATUS:",
+            newStatus,
+            "NEW CHECKLIST:",
+            payload.new?.checklist_submitted,
+            "PREVIOUS STATUS:",
+            previousStatus,
+            "PREVIOUS CHECKLIST:",
+            previousChecklistSubmitted
           );
+
+          // NEW ALERT CYCLE:
+          // true -> false means Admin's checklist was reset.
+          const checklistReset =
+            previousChecklistSubmitted === true &&
+            newChecklistSubmitted === false;
+
+          // NEW ALERT CYCLE:
+          // booking returned to UNDER_REVIEW.
+          const returnedToUnderReview =
+            previousStatus !== "UNDER_REVIEW" &&
+            newStatus === "UNDER_REVIEW";
+
+          if (checklistReset || returnedToUnderReview) {
+            alertedCompletedBookings.current.delete(changedBookingId);
+            dismissedWorkCompletedBookings.current.delete(changedBookingId);
+
+            console.log(
+              "WORK COMPLETED ALERT: NEW ALERT CYCLE:",
+              changedBookingId,
+              {
+                checklistReset,
+                returnedToUnderReview,
+              }
+            );
+          }
+
+          // Always remember the latest database state.
+          lastKnownBookingAlertState.current.set(changedBookingId, {
+            work_status: newStatus,
+            checklist_submitted: newChecklistSubmitted,
+          });
 
           showUnderReviewPopup(payload.new);
         }
@@ -1859,10 +1957,8 @@ channel.subscribe((status) => {
         );
       });
 
-    // IMPORTANT:
-    // If the partner changed the booking to UNDER_REVIEW before
-    // the Admin page was opened/refreshed, realtime will not replay
-    // that old event. Therefore check the current database state once.
+    // If a booking was already UNDER_REVIEW before this Admin page opened,
+    // initialize its state and allow the popup once.
     const checkExistingUnderReviewBookings = async () => {
       try {
         const { data, error } = await supabase
@@ -1884,20 +1980,35 @@ channel.subscribe((status) => {
           data
         );
 
-        if (data && data.length > 0) {
-          // Show the latest UNDER_REVIEW booking that has not
-          // already been alerted during this Admin page session.
-          const pendingBooking = data.find(
-            (booking) =>
-              booking?.id &&
-              !alertedCompletedBookings.current.has(
-                String(booking.id)
-              )
-          );
+        (data || []).forEach((booking) => {
+          if (!booking?.id) return;
 
-          if (pendingBooking) {
-            showUnderReviewPopup(pendingBooking);
-          }
+          lastKnownBookingAlertState.current.set(
+            String(booking.id),
+            {
+              work_status: String(booking.work_status || "")
+                .trim()
+                .toUpperCase(),
+              checklist_submitted:
+                booking.checklist_submitted === true,
+            }
+          );
+        });
+
+        const pendingBooking = (data || []).find(
+          (booking) =>
+            booking?.id &&
+            booking?.checklist_submitted !== true &&
+            !alertedCompletedBookings.current.has(
+              String(booking.id)
+            ) &&
+            !dismissedWorkCompletedBookings.current.has(
+              String(booking.id)
+            )
+        );
+
+        if (pendingBooking) {
+          showUnderReviewPopup(pendingBooking);
         }
       } catch (error) {
         console.error(
@@ -1990,34 +2101,49 @@ channel.subscribe((status) => {
   };
 
 
+const getBookingAddOnsDisplay = (b) => {
+  if (!b) return "N/A";
 
-  const getBookingAddOnsDisplay = (b) => {
-    const addons = b.add_ons || b.services?.[0]?.add_ons;
-    if (!addons) return "N/A";
-    let list = [];
-    if (Array.isArray(addons)) {
-      list = addons;
-    } else if (typeof addons === "string") {
-      try {
-        const parsed = JSON.parse(addons);
-        if (Array.isArray(parsed)) list = parsed;
-      } catch (e) {
-        return addons;
-      }
-    } else if (typeof addons === "object") {
-      list = Object.values(addons);
+  let services = b.services;
+
+  // In case services is stored as JSON text
+  if (typeof services === "string") {
+    try {
+      services = JSON.parse(services);
+    } catch (error) {
+      console.error("Failed to parse booking services:", error);
+      return "N/A";
     }
-    if (!list || list.length === 0) return "N/A";
-    return list.map(item => {
-      if (typeof item === "string") return item;
-      if (item && typeof item === "object") {
-        const title = item.title || item.name || "Add-on";
-        const price = item.price !== undefined && item.price !== null ? (String(item.price).startsWith("₹") ? item.price : `₹${item.price}`) : "";
-        return price ? `${title} - ${price}` : title;
-      }
-      return String(item);
-    }).join(", ");
-  };
+  }
+
+  if (!Array.isArray(services)) {
+    return "N/A";
+  }
+
+  // Add-ons are stored as separate objects inside the services array
+  const addons = services.filter(
+    (item) => item && item.is_addon === true
+  );
+
+  if (addons.length === 0) {
+    return "N/A";
+  }
+
+  return addons
+    .map((addon) => {
+      const title = addon.title || addon.name || "Add-on";
+
+      const price =
+        addon.price !== undefined && addon.price !== null
+          ? String(addon.price).startsWith("₹")
+            ? addon.price
+            : `₹${addon.price}`
+          : "";
+
+      return price ? `${title} - ${price}` : title;
+    })
+    .join(", ");
+};
 
   // Helper to extract numeric value from strings like "₹1,000"
   const cleanNumeric = (val) => {
@@ -2782,12 +2908,37 @@ channel.subscribe((status) => {
   const fetchBookings = async (isBackground = false) => {
     try {
       if (!isBackground) setLoading(true);
-      // Fetch ALL bookings. There is intentionally no date filter or row limit.
-      // Tab membership is determined from work_status below.
-      const { data } = await supabase
-        .from("bookings")
-        .select("*")
-        .order("created_at", { ascending: false });
+      // Fetch ALL bookings in pages. Supabase/PostgREST can cap a single
+      // unpaginated SELECT, so one SELECT is NOT enough for the full history.
+      // There is intentionally no date filter. Tab membership is determined
+      // from work_status below.
+      const BOOKING_PAGE_SIZE = 1000;
+      let data = [];
+      let bookingFrom = 0;
+
+      while (true) {
+        const { data: bookingPage, error: bookingError } = await supabase
+          .from("bookings")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .range(bookingFrom, bookingFrom + BOOKING_PAGE_SIZE - 1);
+
+        if (bookingError) {
+          console.error("Error fetching bookings page:", bookingError);
+          throw bookingError;
+        }
+
+        const pageRows = bookingPage || [];
+        data = data.concat(pageRows);
+
+        if (pageRows.length < BOOKING_PAGE_SIZE) {
+          break;
+        }
+
+        bookingFrom += BOOKING_PAGE_SIZE;
+      }
+
+      console.log("BOOKINGS FETCH COMPLETE. TOTAL ROWS:", data.length);
 
       const { data: reviewsData } = await supabase
         .from("reviews")
@@ -2846,6 +2997,19 @@ channel.subscribe((status) => {
 
         staffData?.forEach((s) => (sMap[s.email] = s.name));
       }
+
+      // Keep the alert listener's last known state in sync with the database.
+      (data || []).forEach((booking) => {
+        if (!booking?.id) return;
+
+        lastKnownBookingAlertState.current.set(String(booking.id), {
+          work_status: String(booking.work_status || "")
+            .trim()
+            .toUpperCase(),
+          checklist_submitted:
+            booking.checklist_submitted === true,
+        });
+      });
 
       // UPDATE ALL STATE AT ONCE TO PREVENT FLICKERING
       setBookings(data || []);
@@ -3754,8 +3918,9 @@ channel.subscribe((status) => {
 );
 
   // SOURCE OF TRUTH:
-  // UNDER_REVIEW bookings always belong in the Under Review tab,
-  // regardless of created_at or work_ended_at.
+  // Under Review is determined only by work_status.
+  // work_ended_at and created_at must never move a booking into/out of
+  // this tab. A COMPLETED booking can therefore never appear here.
   const underReviewBookings = bookings.filter((b) =>
     b.work_status?.trim()?.toUpperCase() === "UNDER_REVIEW" &&
     !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(b.refund_status)
@@ -6326,6 +6491,19 @@ channel.subscribe((status) => {
 
   /* ================= BOOKINGS TABLE ================= */
 
+  const handleDismissWorkCompletedAlert = () => {
+    const dismissedBookingId = workCompletedBooking?.id;
+
+    if (dismissedBookingId) {
+      dismissedWorkCompletedBookings.current.add(
+        String(dismissedBookingId)
+      );
+    }
+
+    setShowWorkCompletedAlert(false);
+    setWorkCompletedBooking(null);
+  };
+
   return (
     <div className="dashboard services-wrapper">
       {showWorkCompletedAlert && (
@@ -6358,9 +6536,10 @@ channel.subscribe((status) => {
           >
             <button
               type="button"
-              onClick={() => {
-                setShowWorkCompletedAlert(false);
-                setWorkCompletedBooking(null);
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleDismissWorkCompletedAlert();
               }}
               style={{
                 position: "absolute",
@@ -6553,6 +6732,29 @@ channel.subscribe((status) => {
               }}
             >
               COMPLETE USER CHECKLIST
+            </button>
+
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                handleDismissWorkCompletedAlert();
+              }}
+              style={{
+                width: "100%",
+                marginTop: "10px",
+                padding: "12px 20px",
+                border: "1px solid #cbd5e1",
+                borderRadius: "10px",
+                backgroundColor: "#f8fafc",
+                color: "#334155",
+                fontSize: "15px",
+                fontWeight: "800",
+                cursor: "pointer",
+              }}
+            >
+              CLOSE
             </button>
           </div>
         </div>

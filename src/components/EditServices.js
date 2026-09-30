@@ -19,6 +19,9 @@ function EditService() {
     tax_percent: "",
     cancellation_fee: "",
     partner_cancellation_amount: "",
+    partial_payment_enabled: false,
+    partial_payment_amount: "",
+    remaining_payment_amount: "",
     image: "",
     gallery_images: "",
     service_type: "",
@@ -61,8 +64,26 @@ function EditService() {
           discount_percent: data.discount_percent !== null ? data.discount_percent : "",
           discount_label: data.discount_label || "",
           tax_percent: data.tax_percent !== null ? data.tax_percent : "",
-          cancellation_fee: data.cancellation_fee !== undefined && data.cancellation_fee !== null ? data.cancellation_fee : defaultFee,
-          partner_cancellation_amount: data.partner_cancellation_amount !== undefined && data.partner_cancellation_amount !== null ? data.partner_cancellation_amount : "99",
+          cancellation_fee:
+            data.cancellation_fee !== undefined && data.cancellation_fee !== null
+              ? data.cancellation_fee
+              : defaultFee,
+          partner_cancellation_amount:
+            data.partner_cancellation_amount !== undefined &&
+            data.partner_cancellation_amount !== null
+              ? data.partner_cancellation_amount
+              : "99",
+          partial_payment_enabled: data.partial_payment_enabled ?? false,
+          partial_payment_amount:
+            data.partial_payment_amount !== null &&
+            data.partial_payment_amount !== undefined
+              ? data.partial_payment_amount
+              : "",
+          remaining_payment_amount:
+            data.remaining_payment_amount !== null &&
+            data.remaining_payment_amount !== undefined
+              ? data.remaining_payment_amount
+              : "",
           image: data.image || "",
           gallery_images: data.gallery_images ? data.gallery_images.join(", ") : "",
           service_type: data.service_type || "",
@@ -112,6 +133,48 @@ function EditService() {
     };
     fetchMainCategories();
   }, []);
+
+  // Partial payment: automatically calculate remaining payment
+  // from the actual service price minus the admin-entered partial amount.
+  useEffect(() => {
+    if (!formData.partial_payment_enabled) {
+      if (formData.remaining_payment_amount !== "") {
+        setFormData((prev) => ({
+          ...prev,
+          remaining_payment_amount: "",
+        }));
+      }
+      return;
+    }
+
+    const actualPrice = Number(
+      String(formData.price || "").replace(/[^0-9.]/g, "")
+    );
+    const partialAmount = Number(formData.partial_payment_amount) || 0;
+
+    if (actualPrice > 0 && partialAmount > 0) {
+      const remainingAmount = actualPrice - partialAmount;
+      const calculatedRemaining =
+        remainingAmount >= 0 ? String(remainingAmount) : "";
+
+      if (String(formData.remaining_payment_amount) !== calculatedRemaining) {
+        setFormData((prev) => ({
+          ...prev,
+          remaining_payment_amount: calculatedRemaining,
+        }));
+      }
+    } else if (formData.remaining_payment_amount !== "") {
+      setFormData((prev) => ({
+        ...prev,
+        remaining_payment_amount: "",
+      }));
+    }
+  }, [
+    formData.price,
+    formData.partial_payment_enabled,
+    formData.partial_payment_amount,
+    formData.remaining_payment_amount,
+  ]);
 
   // Improved Effect: Auto-fill category_order
   useEffect(() => {
@@ -198,6 +261,37 @@ function EditService() {
 
   const updateService = async () => {
     setLoading(true);
+
+    // Validate partial payment before uploading files or updating the service.
+    const actualPrice = Number(
+      String(formData.price || "").replace(/[^0-9.]/g, "")
+    );
+    const partialAmount = Number(formData.partial_payment_amount) || 0;
+
+    if (formData.partial_payment_enabled) {
+      if (!actualPrice || actualPrice <= 0) {
+        setValidationAlert(
+          "Please enter a valid service price before enabling partial payment."
+        );
+        setLoading(false);
+        return;
+      }
+
+      if (!partialAmount || partialAmount <= 0) {
+        setValidationAlert("Please enter a valid partial payment amount.");
+        setLoading(false);
+        return;
+      }
+
+      if (partialAmount >= actualPrice) {
+        setValidationAlert(
+          "Partial payment must be less than the actual service price."
+        );
+        setLoading(false);
+        return;
+      }
+    }
+
     const proceedWithUpdate = async () => {
       // Upload images to category-icons bucket under main/{service_type_title_case}/
       const folderPath = `category_icons`;
@@ -263,6 +357,20 @@ function EditService() {
         duration: formData.duration,
         price: formData.price,
         original_price: formData.original_price,
+
+        partial_payment_enabled: formData.partial_payment_enabled,
+
+        partial_payment_amount:
+          formData.partial_payment_enabled &&
+          formData.partial_payment_amount !== ""
+            ? Number(formData.partial_payment_amount)
+            : null,
+
+        remaining_payment_amount:
+          formData.partial_payment_enabled &&
+          formData.remaining_payment_amount !== ""
+            ? Number(formData.remaining_payment_amount)
+            : null,
         discount_percent: formData.discount_percent ? Number(formData.discount_percent) : null,
         discount_label: formData.discount_label,
         tax_percent: formData.tax_percent ? Number(formData.tax_percent) : null,
@@ -542,6 +650,144 @@ function EditService() {
             <span style={{ fontSize: "11px", color: "#666", marginTop: "2px", display: "block" }}>
               Cancellation fee allocated to staff / partner
             </span>
+          </div>
+        </div>
+
+        {/* Partial Payment Section */}
+        <div
+          style={{
+            marginBottom: "14px",
+            padding: "16px",
+            border: "1px solid #ddd",
+            borderRadius: "8px",
+            backgroundColor: "#fafafa",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "13px",
+              fontWeight: "700",
+              color: "#555",
+              marginBottom: "12px",
+              textTransform: "uppercase",
+            }}
+          >
+            Partial Payment
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: formData.partial_payment_enabled
+                ? "1fr 1fr 1fr"
+                : "1fr",
+              gap: "14px",
+            }}
+          >
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: "5px",
+                  fontSize: "12px",
+                  fontWeight: "700",
+                  color: "#888",
+                  textTransform: "uppercase",
+                }}
+              >
+                Partial Payment
+              </label>
+              <select
+                className="auth-input"
+                name="partial_payment_enabled"
+                value={formData.partial_payment_enabled ? "TRUE" : "FALSE"}
+                onChange={(e) => {
+                  const enabled = e.target.value === "TRUE";
+
+                  setFormData((prev) => ({
+                    ...prev,
+                    partial_payment_enabled: enabled,
+                    partial_payment_amount: enabled
+                      ? prev.partial_payment_amount
+                      : "",
+                    remaining_payment_amount: enabled
+                      ? prev.remaining_payment_amount
+                      : "",
+                  }));
+                }}
+                style={{ marginBottom: 0 }}
+              >
+                <option value="FALSE">DISABLED</option>
+                <option value="TRUE">ENABLED</option>
+              </select>
+            </div>
+
+            {formData.partial_payment_enabled && (
+              <>
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      marginBottom: "5px",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      color: "#888",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Partial Payment Amount (₹)
+                  </label>
+                  <input
+                    className="auth-input"
+                    type="number"
+                    name="partial_payment_amount"
+                    value={formData.partial_payment_amount}
+                    onChange={handleChange}
+                    min="1"
+                    step="0.01"
+                    placeholder="Enter fixed partial amount"
+                    style={{ marginBottom: 0 }}
+                  />
+                </div>
+
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      marginBottom: "5px",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      color: "#888",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    Remaining Payment (₹)
+                  </label>
+                  <input
+                    className="auth-input"
+                    type="number"
+                    name="remaining_payment_amount"
+                    value={formData.remaining_payment_amount}
+                    readOnly
+                    style={{
+                      marginBottom: 0,
+                      backgroundColor: "#f3f4f6",
+                      cursor: "not-allowed",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      color: "#666",
+                      marginTop: "4px",
+                      display: "block",
+                    }}
+                  >
+                    Automatically calculated from actual service price.
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
