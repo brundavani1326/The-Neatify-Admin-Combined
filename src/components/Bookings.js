@@ -464,9 +464,101 @@ const StaffMapViewModal = ({
     </div>
   );
 };
+const getBookingPaymentDetails = (b, paymentsMap = {}) => {
+  if (!b) return { advanceAmount: "N/A", pendingAmount: "N/A", rawAdvance: 0, rawPending: 0 };
+
+  const total = Number(b.total_amount ?? b.price ?? 0);
+
+  let svc = null;
+  if (Array.isArray(b.services) && b.services.length > 0) {
+    svc = b.services[0];
+  } else if (typeof b.services === "string") {
+    try {
+      const parsed = JSON.parse(b.services);
+      if (Array.isArray(parsed) && parsed.length > 0) svc = parsed[0];
+    } catch (e) {}
+  }
+
+  const payments = (
+    paymentsMap[b.id] ||
+    paymentsMap[b.booking_id] ||
+    []
+  ).filter((p) => {
+    if (!p.status) return true;
+    const st = String(p.status).toLowerCase();
+    return st === "success" || st === "paid" || st === "captured";
+  });
+
+  let advanceFromPayments = 0;
+  let remainingFromPayments = 0;
+  let hasPaymentsTableData = false;
+
+  if (payments && payments.length > 0) {
+    hasPaymentsTableData = true;
+    payments.forEach((p) => {
+      const pType = String(p.payment_type || "").toUpperCase();
+      const pAmt = Number(p.amount || 0);
+      if (pType.includes("ADVANCE") || pType.includes("PARTIAL") || pType === "FIRST") {
+        advanceFromPayments += pAmt;
+      } else if (pType.includes("REMAINING") || pType.includes("PENDING") || pType.includes("FINAL") || pType === "SECOND") {
+        remainingFromPayments += pAmt;
+      } else {
+        advanceFromPayments += pAmt;
+      }
+    });
+  }
+
+  let advance = null;
+  let pending = null;
+
+  if (hasPaymentsTableData && advanceFromPayments > 0) {
+    advance = advanceFromPayments;
+  } else if (b.advance_amount !== undefined && b.advance_amount !== null && b.advance_amount !== "") {
+    advance = Number(b.advance_amount);
+  } else if (svc && svc.advance_amount !== undefined && svc.advance_amount !== null && svc.advance_amount !== "") {
+    advance = Number(svc.advance_amount);
+  } else if (svc && svc.partial_payment_amount !== undefined && svc.partial_payment_amount !== null && svc.partial_payment_amount !== "") {
+    advance = Number(svc.partial_payment_amount);
+  } else if (b.paid_amount !== undefined && b.paid_amount !== null && Number(b.paid_amount) > 0) {
+    advance = Number(b.paid_amount);
+  } else {
+    const status = String(b.payment_status || "").toLowerCase();
+    if (status === "paid" || status === "captured") {
+      advance = total;
+    } else {
+      advance = 0;
+    }
+  }
+
+  if (hasPaymentsTableData && remainingFromPayments > 0) {
+    pending = Math.max(0, total - advanceFromPayments);
+  } else if (b.pending_amount !== undefined && b.pending_amount !== null && b.pending_amount !== "") {
+    pending = Number(b.pending_amount);
+  } else if (svc && svc.pending_amount !== undefined && svc.pending_amount !== null && svc.pending_amount !== "") {
+    pending = Number(svc.pending_amount);
+  } else if (svc && svc.remaining_payment_amount !== undefined && svc.remaining_payment_amount !== null && svc.remaining_payment_amount !== "") {
+    pending = Number(svc.remaining_payment_amount);
+  } else if (b.remaining_amount !== undefined && b.remaining_amount !== null && Number(b.remaining_amount) > 0) {
+    pending = Number(b.remaining_amount);
+  } else {
+    pending = Math.max(0, total - (advance || 0));
+  }
+
+  const formattedAdvance = advance !== null && !isNaN(advance) ? `₹${advance}` : "N/A";
+  const formattedPending = pending !== null && !isNaN(pending) ? `₹${pending}` : "N/A";
+
+  return {
+    advanceAmount: formattedAdvance,
+    pendingAmount: formattedPending,
+    rawAdvance: advance,
+    rawPending: pending
+  };
+};
+
 function BookingPage() {
   console.warn("🔥 TEST: BookingPage is running");
   const [bookings, setBookings] = useState([]);
+  const [bookingPaymentsMap, setBookingPaymentsMap] = useState({});
   const [staffMap, setStaffMap] = useState({});
   const [reviewsMap, setReviewsMap] = useState({});
   const [activeTab, setActiveTab] = useState(() => {
@@ -572,6 +664,34 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
 
     return entries.sort((a, b) => b[0].localeCompare(a[0]));
   };
+  const handleViewChecklistFromUnderReview = (booking) => {
+    if (!booking?.id) {
+      triggerModal(
+        "Checklist Error",
+        "The booking ID could not be found."
+      );
+      return;
+    }
+
+    const checklist = customerChecklists.find(
+      (cl) => String(cl.booking_id) === String(booking.id)
+    );
+
+    if (!checklist || !Array.isArray(checklist.tasks) || checklist.tasks.length === 0) {
+      triggerModal(
+        "Checklist Not Found",
+        "No checklist was found for this booking."
+      );
+      return;
+    }
+
+    setSelectedChecklistTasks(checklist.tasks);
+    setSelectedChecklistBooking({
+      ...checklist,
+      bookings: booking,
+    });
+    setShowChecklistModal(true);
+  };
   const handleCloseManualChecklist = async (bookingId) => {
   if (!bookingId) return;
 
@@ -608,7 +728,6 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
         .from("bookings")
         .update({
           checklist_submitted: true,
-          work_status: "COMPLETED",
         })
         .eq("id", bookingId)
         .eq("work_status", "UNDER_REVIEW")
@@ -643,7 +762,7 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
     }
 
     console.log(
-      "MANUAL BOOKING STATUS UPDATED TO COMPLETED:",
+      "MANUAL BOOKING CHECKLIST SUBMITTED:",
       updatedBooking
     );
 
@@ -654,15 +773,27 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
               ...booking,
               ...updatedBooking,
               checklist_submitted: true,
-              work_status: "COMPLETED",
             }
           : booking
       )
     );
 
+    setSelectedChecklistBooking((prev) =>
+      prev
+        ? {
+            ...prev,
+            bookings: {
+              ...prev.bookings,
+              ...updatedBooking,
+              checklist_submitted: true,
+            },
+          }
+        : prev
+    );
+
     triggerModal(
-      "Checklist Closed",
-      "The manual booking checklist has been closed successfully and the booking is now COMPLETED."
+      "Checklist Submitted",
+      "The checklist has been submitted successfully. Ask the partner to complete the service."
     );
 
     setCustomerChecklists((prev) =>
@@ -1066,16 +1197,27 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
             }}
           >
             <h2
-              style={{
-                margin: 0,
-                fontSize: "20px",
-                fontWeight: "800",
-                color: "#0f172a"
-              }}
-            >
-              📝 Customer Checklist Tasks
-            </h2>
-
+  style={{
+    margin: 0,
+    fontSize: "20px",
+    fontWeight: "800",
+    color: "#0f172a"
+  }}
+>
+  📝 Customer Checklist Tasks
+  <div
+    style={{
+      fontSize: "13px",
+      fontWeight: "600",
+      color: "#64748b",
+      marginTop: "6px"
+    }}
+  >
+    Booking ID: {selectedChecklistBooking?.booking_id || "N/A"}
+    <br />
+    Customer Name: {selectedChecklistBooking?.bookings?.customer_name || "N/A"}
+  </div>
+</h2>
             <button
               type="button"
               onClick={() => {
@@ -1098,45 +1240,66 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
           </div>
 
           {selectedChecklistBooking?.bookings?.platform === "Admin Manual" && (
-            <button
-              type="button"
-              onClick={() =>
-                handleCloseManualChecklist(
-                  selectedChecklistBooking.booking_id
-                )
-              }
-              disabled={selectedChecklistTasks.every(
-                (task) => task.manual_admin_completed === true
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  handleCloseManualChecklist(
+                    selectedChecklistBooking.booking_id
+                  )
+                }
+                disabled={
+                  selectedChecklistBooking?.bookings?.checklist_submitted === true ||
+                  !selectedChecklistTasks.every(
+                    (task) => task.manual_admin_completed === true
+                  )
+                }
+                style={{
+                  marginTop: "12px",
+                  marginBottom: "10px",
+                  width: "100%",
+                  padding: "12px",
+                  border: "none",
+                  borderRadius: "8px",
+                  background:
+                    selectedChecklistBooking?.bookings?.checklist_submitted === true
+                      ? "#94a3b8"
+                      : selectedChecklistTasks.every(
+                          (task) => task.manual_admin_completed === true
+                        )
+                        ? "#16a34a"
+                        : "#94a3b8",
+                  color: "#fff",
+                  fontWeight: "800",
+                  cursor:
+                    selectedChecklistBooking?.bookings?.checklist_submitted === true ||
+                    !selectedChecklistTasks.every(
+                      (task) => task.manual_admin_completed === true
+                    )
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {selectedChecklistBooking?.bookings?.checklist_submitted === true
+                  ? "CHECKLIST SUBMITTED"
+                  : "CLOSE CHECKLIST"}
+              </button>
+
+              {selectedChecklistBooking?.bookings?.checklist_submitted === true && (
+                <div
+                  style={{
+                    marginBottom: "16px",
+                    textAlign: "center",
+                    color: "#166534",
+                    fontSize: "14px",
+                    fontWeight: "700",
+                    lineHeight: "1.5",
+                  }}
+                >
+                  Ask Partner to Complete the Service
+                </div>
               )}
-              style={{
-                marginTop: "12px",
-                marginBottom: "16px",
-                width: "100%",
-                padding: "12px",
-                border: "none",
-                borderRadius: "8px",
-                background:
-                  selectedChecklistTasks.every(
-                    (task) => task.manual_admin_completed === true
-                  )
-                    ? "#94a3b8"
-                    : "#16a34a",
-                color: "#fff",
-                fontWeight: "800",
-                cursor:
-                  selectedChecklistTasks.every(
-                    (task) => task.manual_admin_completed === true
-                  )
-                    ? "not-allowed"
-                    : "pointer",
-              }}
-            >
-              {selectedChecklistTasks.every(
-                (task) => task.manual_admin_completed === true
-              )
-                ? "CHECKLIST CLOSED"
-                : "CLOSE CHECKLIST"}
-            </button>
+            </>
           )}
 
           {selectedChecklistBooking?.bookings?.platform !== "Admin Manual" && (
@@ -2948,6 +3111,23 @@ const getBookingAddOnsDisplay = (b) => {
       reviewsData?.forEach((r) => {
         if (r.booking_id) rMap[r.booking_id] = r.comment;
       });
+
+      const { data: bookingPaymentsData, error: bpError } = await supabase
+        .from("booking_payments")
+        .select("*");
+
+      if (bpError) {
+        console.error("Error fetching booking_payments:", bpError);
+      }
+
+      const bpMap = {};
+      (bookingPaymentsData || []).forEach((p) => {
+        if (p.booking_id) {
+          if (!bpMap[p.booking_id]) bpMap[p.booking_id] = [];
+          bpMap[p.booking_id].push(p);
+        }
+      });
+      setBookingPaymentsMap(bpMap);
 
       const bookingIds = data?.map((b) => b.id).filter(Boolean) || [];
       let upMap = {};
@@ -6584,17 +6764,20 @@ const getBookingAddOnsDisplay = (b) => {
             </p>
 
             {workCompletedBooking?.id && (
-              <p
-                style={{
-                  margin: "0 0 22px",
-                  color: "#64748b",
-                  fontSize: "13px",
-                }}
-              >
-                Booking ID: {workCompletedBooking.id}
-              </p>
-            )}
-
+  <p
+    style={{
+      margin: "0 0 22px",
+      color: "#64748b",
+      fontSize: "13px",
+      lineHeight: "1.6",
+    }}
+  >
+    <strong>Booking ID:</strong> {workCompletedBooking.id}
+    <br />
+    <strong>Customer Name:</strong>{" "}
+    {workCompletedBooking?.customer_name || "N/A"}
+  </p>
+)}
             <button
               type="button"
               onClick={async () => {
@@ -8126,20 +8309,19 @@ const getBookingAddOnsDisplay = (b) => {
                             <td style={{ fontWeight: "700", color: "#0f172a" }}>
                               {b.total_amount !== undefined && b.total_amount !== null ? `₹${b.total_amount}` : "N/A"}
                             </td>
-                            <td style={{ fontWeight: "600", color: "#1e293b" }}>
-                              {b.advance_amount !== undefined && b.advance_amount !== null
-                                ? `₹${b.advance_amount}`
-                                : b.services?.[0]?.advance_amount !== undefined && b.services?.[0]?.advance_amount !== null
-                                  ? `₹${b.services[0].advance_amount}`
-                                  : "N/A"}
-                            </td>
-                            <td style={{ fontWeight: "700", color: "#ef4444" }}>
-                              {b.pending_amount !== undefined && b.pending_amount !== null
-                                ? `₹${b.pending_amount}`
-                                : b.services?.[0]?.pending_amount !== undefined && b.services?.[0]?.pending_amount !== null
-                                  ? `₹${b.services[0].pending_amount}`
-                                  : "N/A"}
-                            </td>
+                            {(() => {
+                              const { advanceAmount, pendingAmount } = getBookingPaymentDetails(b, bookingPaymentsMap);
+                              return (
+                                <>
+                                  <td style={{ fontWeight: "600", color: "#1e293b" }}>
+                                    {advanceAmount}
+                                  </td>
+                                  <td style={{ fontWeight: "700", color: "#ef4444" }}>
+                                    {pendingAmount}
+                                  </td>
+                                </>
+                              );
+                            })()}
                             <td>{b.remarks || b.services?.[0]?.remarks || "N/A"}</td>
                             <td>
                               {b.assigned_staff_email ? (
@@ -8458,6 +8640,24 @@ const getBookingAddOnsDisplay = (b) => {
                                   onClick={() => handleViewStatus(b)}
                                 >
                                   View Status
+                                </button>
+                              )}
+
+                              {activeTab === "under_review" &&
+                                b.platform === "Admin Manual" && (
+                                <button
+                                  type="button"
+                                  className="allot-btn"
+                                  style={{
+                                    marginTop: "8px",
+                                    backgroundColor: "#eff6ff",
+                                    color: "#1d4ed8",
+                                    border: "1px solid #bfdbfe",
+                                    fontWeight: "700",
+                                  }}
+                                  onClick={() => handleViewChecklistFromUnderReview(b)}
+                                >
+                                  View Checklist
                                 </button>
                               )}
                             </td>
