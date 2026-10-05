@@ -730,7 +730,6 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
           checklist_submitted: true,
         })
         .eq("id", bookingId)
-        .eq("work_status", "UNDER_REVIEW")
         .select("*")
         .maybeSingle();
 
@@ -794,6 +793,13 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
     triggerModal(
       "Checklist Submitted",
       "The checklist has been submitted successfully. Ask the partner to complete the service."
+    );
+
+    setSelectedChecklistTasks((prev) =>
+      prev.map((task) => ({
+        ...task,
+        manual_admin_completed: true,
+      }))
     );
 
     setCustomerChecklists((prev) =>
@@ -1249,10 +1255,7 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
                   )
                 }
                 disabled={
-                  selectedChecklistBooking?.bookings?.checklist_submitted === true ||
-                  !selectedChecklistTasks.every(
-                    (task) => task.manual_admin_completed === true
-                  )
+                  selectedChecklistBooking?.bookings?.checklist_submitted === true
                 }
                 style={{
                   marginTop: "12px",
@@ -1264,18 +1267,11 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
                   background:
                     selectedChecklistBooking?.bookings?.checklist_submitted === true
                       ? "#94a3b8"
-                      : selectedChecklistTasks.every(
-                          (task) => task.manual_admin_completed === true
-                        )
-                        ? "#16a34a"
-                        : "#94a3b8",
+                      : "#16a34a",
                   color: "#fff",
                   fontWeight: "800",
                   cursor:
-                    selectedChecklistBooking?.bookings?.checklist_submitted === true ||
-                    !selectedChecklistTasks.every(
-                      (task) => task.manual_admin_completed === true
-                    )
+                    selectedChecklistBooking?.bookings?.checklist_submitted === true
                       ? "not-allowed"
                       : "pointer",
                 }}
@@ -2505,6 +2501,14 @@ const getBookingAddOnsDisplay = (b) => {
         },
       ];
 
+      /*
+========================================================
+TEMPORARILY DISABLED FOR ONE WEEK
+OLD ADMIN MANUAL BOOKING T&C + OTP FLOW
+DO NOT DELETE
+RESTORE THIS BLOCK AFTER ONE WEEK
+========================================================
+
       // Create ONLY a pending request. The real bookings row is created
       // after the customer accepts T&C and the admin verifies the OTP.
       const manualRequestId =
@@ -2616,19 +2620,199 @@ const getBookingAddOnsDisplay = (b) => {
         "T&C Sent",
         "Terms & Conditions have been sent to the customer's WhatsApp. Ask the customer to press ACCEPT. After ACCEPT, an OTP will be sent to the customer. Enter that OTP here to verify and create the final booking."
       );
+
+========================================================
+END TEMPORARILY DISABLED T&C + OTP FLOW
+========================================================
+*/
+
+      // ========================================================
+      // TEMPORARY DIRECT MANUAL BOOKING CREATION (1 WEEK)
+      // ========================================================
+      const generateOtp = () =>
+        Math.floor(100000 + Math.random() * 900000).toString();
+
+      const startOtp = manualBookingData.startotp || generateOtp();
+      let endOtp = manualBookingData.endotp || generateOtp();
+      while (startOtp === endOtp) {
+        endOtp = generateOtp();
+      }
+
+      const bookingId =
+        (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID()
+          : ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(
+              /[018]/g,
+              c =>
+                (c ^
+                  (window.crypto.getRandomValues(
+                    new Uint8Array(1)
+                  )[0] &
+                    (15 >> (c / 4))))
+                  .toString(16)
+            );
+      const nowIso = new Date().toISOString();
+
+      const directBookingPayload = {
+        booking_id: bookingId,
+        customer_name: manualBookingData.user_name,
+        phone_number: manualBookingData.user_phone,
+        email:
+          manualBookingData.user_email ||
+          `${String(manualBookingData.user_phone).replace(/\D/g, "")}@manual.com`,
+        full_address: manualBookingData.address || null,
+        location_link: manualBookingData.location_link || null,
+        latitude: manualBookingData.latitude
+          ? parseFloat(manualBookingData.latitude)
+          : null,
+        longitude: manualBookingData.longitude
+          ? parseFloat(manualBookingData.longitude)
+          : null,
+        booking_date: manualBookingData.booking_date,
+        booking_time: manualBookingData.booking_time,
+        services: servicesJson,
+        add_ons: addOnsJson,
+        total_amount: finalTotalAmount,
+        advance_amount: advanceAmt,
+        pending_amount: pendingAmt,
+        remarks: manualBookingData.remarks || "",
+        work_status: "PENDING",
+        payment_method: "MANUAL",
+        payment_status: "paid",
+        payment_verified: true,
+        platform: "Admin Manual",
+        startotp: startOtp,
+        endotp: endOtp,
+        terms_accepted: true,
+        terms_accepted_at: nowIso,
+        otp_verified: true,
+        otp_verified_at: nowIso,
+        created_at: nowIso,
+      };
+
+      let insertedRows = null;
+      const { data: initialRows, error: insertError } = await supabase
+        .from("bookings")
+        .insert([directBookingPayload])
+        .select();
+
+      if (insertError) {
+        console.warn(
+          "Initial full booking insert failed, trying fallback without optional top-level columns:",
+          insertError.message
+        );
+        const fallbackInsertData = { ...directBookingPayload };
+        delete fallbackInsertData.add_ons;
+        delete fallbackInsertData.advance_amount;
+        delete fallbackInsertData.pending_amount;
+        delete fallbackInsertData.remarks;
+
+        const { data: fallbackRows, error: fallbackError } = await supabase
+          .from("bookings")
+          .insert([fallbackInsertData])
+          .select();
+
+        if (fallbackError) {
+          throw new Error(
+            `Could not create manual booking: ${fallbackError.message}`
+          );
+        }
+        insertedRows = fallbackRows;
+      } else {
+        insertedRows = initialRows;
+      }
+
+      const createdBookingRow =
+        insertedRows && insertedRows.length > 0 ? insertedRows[0] : null;
+
+      const newBookingRowId = createdBookingRow?.id;
+      const createdDisplayBookingId =
+        createdBookingRow?.booking_id || bookingId;
+
+      // Create manual booking checklist
+      const manualServiceName =
+        selectedService?.title ||
+        selectedService?.service_name ||
+        "Service";
+
+      const manualChecklistItems =
+        getManualBookingChecklistItems(manualServiceName);
+
+      if (newBookingRowId && manualChecklistItems.length > 0) {
+        const checklistPayload = manualChecklistItems.map(
+          (taskTitle, index) => ({
+            booking_id: newBookingRowId,
+            task_index: index,
+            task_title: taskTitle,
+            customer_completed: false,
+            manual_admin_completed: false,
+          })
+        );
+
+        const { error: checklistError } = await supabase
+          .from("booking_checklists")
+          .upsert(checklistPayload, {
+            onConflict: "booking_id,task_index",
+          });
+
+        if (checklistError) {
+          console.error(
+            "Failed to create manual booking checklist:",
+            checklistError
+          );
+          throw new Error(
+            "Booking was created, but the manual booking checklist could not be created."
+          );
+        }
+      }
+
+      setManualBookingOtp("");
+      setManualBookingRequestId(null);
+      setShowManualModal(false);
+      setShowAddonDropdown(false);
+
+      setManualBookingData({
+        user_name: "",
+        user_phone: "",
+        user_email: "",
+        address: "",
+        location_link: "",
+        latitude: "",
+        longitude: "",
+        booking_date: "",
+        booking_time: "",
+        price: "",
+        service_id: "",
+        startotp: "",
+        endotp: "",
+        selected_addons: [],
+        service_base_price: "",
+        advance_amount: "",
+        pending_amount: "",
+        remarks: "",
+      });
+
+      await fetchBookings();
+
+      triggerModal(
+        "Booking Created Successfully",
+        createdDisplayBookingId
+          ? `Booking ${createdDisplayBookingId} has been created successfully.`
+          : "The booking has been created successfully."
+      );
     } catch (error) {
       console.error(
-        "Manual booking request error:",
+        "Manual booking error:",
         error
       );
-
-      setManualBookingLoading(false);
 
       triggerModal(
         "Error",
         error?.message ||
-        "Something went wrong while creating the pending booking request."
+        "Something went wrong while creating the manual booking."
       );
+    } finally {
+      setManualBookingLoading(false);
     }
   };
 
@@ -9818,6 +10002,14 @@ const getBookingAddOnsDisplay = (b) => {
                 </div>
               </div>
 
+              {/*
+========================================================
+TEMPORARILY DISABLED FOR ONE WEEK
+CUSTOMER CONSENT OTP UI
+DO NOT DELETE
+RESTORE AFTER ONE WEEK
+========================================================
+
               {manualBookingRequestId && (
                 <div
                   style={{
@@ -9949,57 +10141,57 @@ const getBookingAddOnsDisplay = (b) => {
                           data
                         );
                         // Create the service-specific checklist for the manual booking
-const manualService = allServices.find(
-  (s) =>
-    String(s.id) ===
-    String(manualBookingData.service_id)
-);
+                        const manualService = allServices.find(
+                          (s) =>
+                            String(s.id) ===
+                            String(manualBookingData.service_id)
+                        );
 
-const manualServiceName =
-  manualService?.title ||
-  manualService?.service_name ||
-  "Service";
+                        const manualServiceName =
+                          manualService?.title ||
+                          manualService?.service_name ||
+                          "Service";
 
-const manualChecklistItems =
-  getManualBookingChecklistItems(manualServiceName);
+                        const manualChecklistItems =
+                          getManualBookingChecklistItems(manualServiceName);
 
-if (data?.booking_row_id && manualChecklistItems.length > 0) {
-  const checklistPayload = manualChecklistItems.map(
-    (taskTitle, index) => ({
-      booking_id: data.booking_row_id,
-      task_index: index,
-      task_title: taskTitle,
-      customer_completed: false,
-      manual_admin_completed: false,
-    })
-  );
+                        if (data?.booking_row_id && manualChecklistItems.length > 0) {
+                          const checklistPayload = manualChecklistItems.map(
+                            (taskTitle, index) => ({
+                              booking_id: data.booking_row_id,
+                              task_index: index,
+                              task_title: taskTitle,
+                              customer_completed: false,
+                              manual_admin_completed: false,
+                            })
+                          );
 
-  const { error: checklistError } = await supabase
-    .from("booking_checklists")
-    .upsert(checklistPayload, {
-      onConflict: "booking_id,task_index",
-    });
+                          const { error: checklistError } = await supabase
+                            .from("booking_checklists")
+                            .upsert(checklistPayload, {
+                              onConflict: "booking_id,task_index",
+                            });
 
-  if (checklistError) {
-    console.error(
-      "Failed to create manual booking checklist:",
-      checklistError
-    );
+                          if (checklistError) {
+                            console.error(
+                              "Failed to create manual booking checklist:",
+                              checklistError
+                            );
 
-    throw new Error(
-      "Booking was created, but the manual booking checklist could not be created."
-    );
-  }
+                            throw new Error(
+                              "Booking was created, but the manual booking checklist could not be created."
+                            );
+                          }
 
-  console.log(
-    "Manual booking checklist created:",
-    {
-      booking_id: data.booking_row_id,
-      service: manualServiceName,
-      tasks: manualChecklistItems,
-    }
-  );
-}
+                          console.log(
+                            "Manual booking checklist created:",
+                            {
+                              booking_id: data.booking_row_id,
+                              service: manualServiceName,
+                              tasks: manualChecklistItems,
+                            }
+                          );
+                        }
 
                         setManualBookingOtp("");
                         setManualBookingRequestId(null);
@@ -10077,6 +10269,11 @@ if (data?.booking_row_id && manualChecklistItems.length > 0) {
                   </button>
                 </div>
               )}
+
+========================================================
+END TEMPORARILY DISABLED OTP UI
+========================================================
+*/}
 
               <div>
                 <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "#64748b", marginBottom: "5px" }}>FINAL PRICE (₹)</label>
