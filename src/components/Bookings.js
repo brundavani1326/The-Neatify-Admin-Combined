@@ -1849,8 +1849,15 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
   });
 
   const [manualBookingRequestId, setManualBookingRequestId] = useState(null);
-  const [manualBookingOtp, setManualBookingOtp] = useState("");
-  const [manualBookingOtpLoading, setManualBookingOtpLoading] = useState(false);
+  /*
+    TEMPORARILY DISABLED FOR ONE WEEK:
+    These states belong to the old Customer Consent OTP UI.
+    Keep them commented so they can be restored when the OTP flow is restored.
+
+    const [manualBookingOtp, setManualBookingOtp] = useState("");
+    const [manualBookingOtpLoading, setManualBookingOtpLoading] = useState(false);
+  */
+  const [, setManualBookingOtp] = useState("");
 
   const [manualBookingData, setManualBookingData] = useState({
     user_name: "",
