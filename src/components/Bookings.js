@@ -4502,12 +4502,17 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
     !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(b.refund_status)
   );
 
-  const assignedBookings = bookings.filter((b) =>
-    b.work_status?.toUpperCase() === "ASSIGNED" &&
-    b.work_status?.toLowerCase() !== "cancelled" &&
-    !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(b.refund_status) &&
-    b.work_status?.toUpperCase() !== "RESCHEDULED"
-  );
+const assignedBookings = bookings.filter((b) =>
+  b.work_status?.toUpperCase() === "ASSIGNED" &&
+  b.work_status?.toLowerCase() !== "cancelled" &&
+  String(b.payment_status || "").trim().toLowerCase() !== "failed" &&
+  !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(b.refund_status) &&
+  b.work_status?.toUpperCase() !== "RESCHEDULED"
+);
+
+  const paymentFailedBookings = bookings.filter((b) =>
+  String(b.payment_status || "").trim().toLowerCase() === "failed"
+);
 
   const rejectedBookings = bookings.filter((b) =>
     (b.staff_response?.trim()?.toUpperCase() === "REJECT" ||
@@ -4529,18 +4534,17 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
     b.work_status?.toUpperCase() !== "RESCHEDULED" &&
     b.assigned_staff_email && b.staff_response?.trim()?.toUpperCase() === "PENDING"
   );
-
-  const unassignedBookings = bookings.filter((b) =>
-    b.work_status?.toUpperCase() !== "ASSIGNED" &&
-    b.work_status?.toLowerCase() !== "cancelled" &&
-    !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(b.refund_status) &&
-    b.work_status?.toLowerCase() !== "completed" &&
-    !b.work_ended_at &&
-    b.work_status?.toUpperCase() !== "RESCHEDULED" &&
-    !(b.staff_response?.trim()?.toUpperCase() === "REJECT" || b.staff_response?.trim()?.toUpperCase() === "REJECTED") &&
-    !(b.assigned_staff_email && b.staff_response?.trim()?.toUpperCase() === "PENDING")
-  );
-
+const unassignedBookings = bookings.filter((b) =>
+  b.work_status?.toUpperCase() !== "ASSIGNED" &&
+  b.work_status?.toLowerCase() !== "cancelled" &&
+  String(b.payment_status || "").trim().toLowerCase() !== "failed" &&
+  !["REFUND_PENDING", "REFUND_INITIATED", "REFUNDED"].includes(b.refund_status) &&
+  b.work_status?.toLowerCase() !== "completed" &&
+  !b.work_ended_at &&
+  b.work_status?.toUpperCase() !== "RESCHEDULED" &&
+  !(b.staff_response?.trim()?.toUpperCase() === "REJECT" || b.staff_response?.trim()?.toUpperCase() === "REJECTED") &&
+  !(b.assigned_staff_email && b.staff_response?.trim()?.toUpperCase() === "PENDING")
+);
 
 
   const applyFilters = (data) =>
@@ -4607,7 +4611,9 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
       : activeTab === "unassigned"
         ? getSortedList(applyFilters(unassignedBookings), "unassigned")
         : activeTab === "assigned"
-          ? getSortedList(applyFilters(assignedBookings), "assigned")
+        ? getSortedList(applyFilters(assignedBookings), "assigned")
+        : activeTab === "payment_failed"
+        ? getSortedList(applyFilters(paymentFailedBookings), "payment_failed")
           : activeTab === "rejected"
             ? getSortedList(applyFilters(rejectedBookings), "rejected")
             : activeTab === "waiting"
@@ -7152,8 +7158,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
             >
               The partner has completed the work. Please complete the user checklist.
             </p>
-
-            {workCompletedBooking?.id && (
+{workCompletedBooking?.id && (
   <p
     style={{
       margin: "0 0 22px",
@@ -7164,8 +7169,21 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
   >
     <strong>Booking ID:</strong> {workCompletedBooking.id}
     <br />
+
     <strong>Customer Name:</strong>{" "}
     {workCompletedBooking?.customer_name || "N/A"}
+    <br />
+
+    <strong>Customer Mobile:</strong>{" "}
+    {workCompletedBooking?.phone_number ||
+      workCompletedBooking?.user_phone ||
+      workCompletedBooking?.customer_phone ||
+      workCompletedBooking?.phone ||
+      "N/A"}
+    <br />
+
+    <strong>Assigned Staff:</strong>{" "}
+    {workCompletedBooking?.assigned_staff_email || "N/A"}
   </p>
 )}
             <button
@@ -7581,6 +7599,12 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
           >
             Assigned ({assignedBookings.length})
           </span>
+          <span
+  className={activeTab === "payment_failed" ? "active" : ""}
+  onClick={() => setActiveTab("payment_failed")}
+>
+  Payment Failed ({paymentFailedBookings.length})
+</span>
           <span
             className={activeTab === "under_review" ? "active" : ""}
             onClick={() => setActiveTab("under_review")}
