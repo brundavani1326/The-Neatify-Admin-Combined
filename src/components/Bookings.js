@@ -1221,7 +1221,15 @@ const [selectedChecklistBooking, setSelectedChecklistBooking] = useState(null);
   >
     Booking ID: {selectedChecklistBooking?.booking_id || "N/A"}
     <br />
-    Customer Name: {selectedChecklistBooking?.bookings?.customer_name || "N/A"}
+    Customer Name: {selectedChecklistBooking?.bookings?.customer_name || selectedChecklistBooking?.customer_name || "N/A"}
+    <br />
+    Customer Number: {selectedChecklistBooking?.bookings?.phone_number || selectedChecklistBooking?.bookings?.user_phone || selectedChecklistBooking?.bookings?.customer_phone || selectedChecklistBooking?.bookings?.phone || selectedChecklistBooking?.phone_number || selectedChecklistBooking?.user_phone || selectedChecklistBooking?.customer_phone || selectedChecklistBooking?.phone || "N/A"}
+    <br />
+    Service: {getMainServiceTitle(selectedChecklistBooking?.bookings || selectedChecklistBooking)}
+    <br />
+    Add-on: {getBookingAddOnsDisplay(selectedChecklistBooking?.bookings || selectedChecklistBooking)}
+    <br />
+    Assigned Staff: {selectedChecklistBooking?.bookings?.assigned_staff_email || "N/A"}
   </div>
 </h2>
             <button
@@ -2267,48 +2275,237 @@ channel.subscribe((status) => {
   };
 
 
-const getBookingAddOnsDisplay = (b) => {
+const ADDON_KEYS = [
+  "add_ons",
+  "addons",
+  "selected_addons",
+  "selected_add_ons",
+  "selectedAddons",
+  "selectedAddOns",
+  "addOns",
+  "add_on",
+  "addon",
+  "addon_list",
+  "add_ons_list",
+  "addonsList",
+  "addonList",
+  "addon_details",
+  "add_on_details",
+  "added_addons",
+  "added_add_ons",
+  "extra_services",
+  "extras",
+  "extra",
+  "additional_services",
+  "items",
+  "sub_services",
+  "subServices"
+];
+
+const getMainServiceTitle = (b) => {
   if (!b) return "N/A";
-
   let services = b.services;
-
-  // In case services is stored as JSON text
   if (typeof services === "string") {
-    try {
-      services = JSON.parse(services);
-    } catch (error) {
-      console.error("Failed to parse booking services:", error);
-      return "N/A";
+    const trimmed = services.trim();
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        services = JSON.parse(trimmed);
+      } catch (e) {
+        services = trimmed;
+      }
     }
   }
 
-  if (!Array.isArray(services)) {
+  if (Array.isArray(services) && services.length > 0) {
+    const mainSvc =
+      services.find(
+        (s) =>
+          s &&
+          !s.is_addon &&
+          !s.isAddon &&
+          !s.is_add_on &&
+          String(s.service_type || s.type || "").toUpperCase() !== "ADDITIONAL SERVICES" &&
+          String(s.service_type || s.type || "").toUpperCase() !== "ADDON" &&
+          String(s.service_type || s.type || "").toUpperCase() !== "ADD_ON"
+      ) || services[0];
+
+    return (
+      mainSvc?.title ||
+      mainSvc?.name ||
+      mainSvc?.service_name ||
+      mainSvc?.service_title ||
+      mainSvc?.label ||
+      "N/A"
+    );
+  }
+
+  if (typeof services === "object" && services !== null) {
+    return (
+      services.title ||
+      services.name ||
+      services.service_name ||
+      services.service_title ||
+      services.label ||
+      "N/A"
+    );
+  }
+
+  if (typeof services === "string" && services.trim()) {
+    return services.trim();
+  }
+
+  return b.service_name || b.service_title || b.service || "N/A";
+};
+
+const getBookingAddOnsDisplay = (b) => {
+  if (!b) return "N/A";
+
+  const rawAddons = [];
+
+  const parseIfJson = (val) => {
+    if (typeof val === "string") {
+      const trimmed = val.trim();
+      if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+        try {
+          return JSON.parse(trimmed);
+        } catch (e) {
+          return val;
+        }
+      }
+    }
+    return val;
+  };
+
+  const collectAddons = (source) => {
+    if (!source) return;
+    const parsed = parseIfJson(source);
+
+    if (Array.isArray(parsed)) {
+      parsed.forEach((item) => {
+        if (item) rawAddons.push(item);
+      });
+    } else if (typeof parsed === "object" && parsed !== null) {
+      rawAddons.push(parsed);
+    } else if (typeof parsed === "string" && parsed.trim() !== "") {
+      const str = parsed.trim();
+      if (str.includes(",") && !str.startsWith("http")) {
+        str.split(",").forEach((s) => {
+          if (s.trim()) rawAddons.push(s.trim());
+        });
+      } else {
+        rawAddons.push(str);
+      }
+    }
+  };
+
+  const collectFromObject = (obj) => {
+    if (!obj || typeof obj !== "object") return;
+    ADDON_KEYS.forEach((key) => {
+      if (obj[key] !== undefined && obj[key] !== null) {
+        collectAddons(obj[key]);
+      }
+    });
+  };
+
+  // 1. Check direct booking-level properties
+  collectFromObject(b);
+
+  // 2. Check b.services (array, string, or object)
+  let services = parseIfJson(b.services);
+  if (services) {
+    if (!Array.isArray(services) && typeof services === "object") {
+      services = [services];
+    }
+    if (Array.isArray(services)) {
+      services.forEach((svc) => {
+        if (!svc) return;
+
+        collectFromObject(svc);
+
+        const sType = String(svc.service_type || svc.type || "").toUpperCase();
+        const isAddon =
+          svc.is_addon === true ||
+          svc.isAddon === true ||
+          svc.is_add_on === true ||
+          sType === "ADDON" ||
+          sType === "ADD_ON" ||
+          sType === "ADDITIONAL SERVICES" ||
+          sType === "ADDITIONAL_SERVICES";
+
+        if (isAddon) {
+          rawAddons.push(svc);
+        }
+      });
+    }
+  }
+
+  // 3. Check b.service (singular object or string)
+  let serviceObj = parseIfJson(b.service);
+  if (serviceObj && typeof serviceObj === "object") {
+    collectFromObject(serviceObj);
+  }
+
+  if (rawAddons.length === 0) {
     return "N/A";
   }
 
-  // Add-ons are stored as separate objects inside the services array
-  const addons = services.filter(
-    (item) => item && item.is_addon === true
-  );
+  // 4. Format extracted add-ons
+  const formattedAddons = [];
+  const seenKeys = new Set();
 
-  if (addons.length === 0) {
-    return "N/A";
-  }
+  rawAddons.forEach((addon) => {
+    if (!addon) return;
 
-  return addons
-    .map((addon) => {
-      const title = addon.title || addon.name || "Add-on";
+    if (typeof addon === "string") {
+      const trimmed = addon.trim();
+      if (trimmed && trimmed.toLowerCase() !== "n/a" && !seenKeys.has(trimmed.toLowerCase())) {
+        seenKeys.add(trimmed.toLowerCase());
+        formattedAddons.push(trimmed);
+      }
+      return;
+    }
 
-      const price =
-        addon.price !== undefined && addon.price !== null
-          ? String(addon.price).startsWith("₹")
-            ? addon.price
-            : `₹${addon.price}`
-          : "";
+    if (typeof addon === "object") {
+      const title =
+        addon.title ||
+        addon.name ||
+        addon.add_on_name ||
+        addon.addon_name ||
+        addon.service_name ||
+        addon.item_name ||
+        addon.label ||
+        addon.name_en ||
+        addon.addonTitle ||
+        addon.selected_addon_name ||
+        addon.addonName ||
+        "Add-on";
 
-      return price ? `${title} - ${price}` : title;
-    })
-    .join(", ");
+      const rawPrice =
+        addon.price ??
+        addon.amount ??
+        addon.cost ??
+        addon.add_on_price ??
+        addon.addonPrice ??
+        addon.final_price ??
+        addon.unit_price;
+
+      let priceStr = "";
+      if (rawPrice !== undefined && rawPrice !== null && String(rawPrice).trim() !== "" && String(rawPrice).trim() !== "0") {
+        const pStr = String(rawPrice).trim();
+        priceStr = pStr.startsWith("₹") || pStr.startsWith("Rs") ? pStr : `₹${pStr}`;
+      }
+
+      const displayStr = priceStr ? `${title} - ${priceStr}` : title;
+      const dedupeKey = `${title}_${priceStr}`.toLowerCase();
+
+      if (!seenKeys.has(dedupeKey)) {
+        seenKeys.add(dedupeKey);
+        formattedAddons.push(displayStr);
+      }
+    }
+  });
+
+  return formattedAddons.length > 0 ? formattedAddons.join(", ") : "N/A";
 };
 
   // Helper to extract numeric value from strings like "₹1,000"
@@ -2685,7 +2882,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
         remarks: manualBookingData.remarks || "",
         work_status: "PENDING",
         payment_method: "MANUAL",
-        payment_status: "paid",
+        payment_status: pendingAmt > 0 ? "partial" : "paid",
         payment_verified: true,
         platform: "Admin Manual",
         startotp: startOtp,
@@ -4223,7 +4420,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
       `Phone: ${b.phone_number || b.user_phone || b.customer_phone || "N/A"}`,
       `Address: ${b.full_address || "N/A"}`,
       `Location Link: ${functionalUrl}`,
-      `Service: ${b.services?.[0]?.title || "N/A"}`,
+      `Service: ${getMainServiceTitle(b)}`,
+      `Add-on: ${getBookingAddOnsDisplay(b)}`,
       `Date: ${formatDate(b.booking_date) || "N/A"}`,
       `Time: ${b.booking_time || "N/A"}`,
       `Total Amount: ${b.total_amount !== undefined && b.total_amount !== null ? `₹${b.total_amount}` : "N/A"}`,
@@ -4242,7 +4440,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
         const url = `https://www.google.com/maps/place/${encodeURIComponent(target)}`;
         return `<a href="${url}" style="color: #3b82f6; text-decoration: underline;">${b.location_link}</a>`;
       })()}<br>
-      Service: ${b.services?.[0]?.title || "N/A"}<br>
+      Service: ${getMainServiceTitle(b)}<br>
+      Add-on: ${getBookingAddOnsDisplay(b)}<br>
       Date: ${formatDate(b.booking_date) || "N/A"}<br>
       Time: ${b.booking_time || "N/A"}<br>
       Total Amount: ${b.total_amount !== undefined && b.total_amount !== null ? `₹${b.total_amount}` : "N/A"}<br>
@@ -7435,6 +7634,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                 <th style={{ minWidth: "160px" }}>Customer Name</th>
                 <th style={{ minWidth: "130px" }}>Phone</th>
                 <th style={{ minWidth: "180px" }}>Service Title</th>
+                <th style={{ minWidth: "250px" }}>Add-on</th>
                 <th style={{ minWidth: "120px" }}>Service Price</th>
                 <th style={{ minWidth: "120px" }}>Service Date</th>
                 <th style={{ minWidth: "100px" }}>Time</th>
@@ -7458,6 +7658,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                 <th style={{ minWidth: "350px" }}>Full Address</th>
                 <th style={{ minWidth: "160px" }}>Location</th>
                 <th style={{ minWidth: "180px" }}>Service</th>
+                <th style={{ minWidth: "250px" }}>Add-on</th>
                 <th style={{ minWidth: "120px" }}>Service Date</th>
                 <th style={{ minWidth: "120px" }}>Service Price</th>
                 <th style={{ minWidth: "120px" }}>Refund Amount</th>
@@ -7474,6 +7675,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                 <th style={{ minWidth: "350px" }}>Full Address</th>
                 <th style={{ minWidth: "160px" }}>Location</th>
                 <th style={{ minWidth: "180px" }}>Service Title</th>
+                <th style={{ minWidth: "250px" }}>Add-on</th>
                 <th style={{ minWidth: "120px" }}>Service Date</th>
                 <th style={{ minWidth: "200px" }}>Task Title</th>
                 <th style={{ minWidth: "130px" }}>Customer Status</th>
@@ -7494,6 +7696,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                 <th style={{ minWidth: "350px" }}>Full Address</th>
                 <th style={{ minWidth: "160px" }}>Location Link</th>
                 <th style={{ minWidth: "180px" }}>Service</th>
+                <th style={{ minWidth: "250px" }}>Add-on</th>
                 <th style={{ minWidth: "120px" }}>Date</th>
                 <th style={{ minWidth: "100px" }}>Time</th>
                 <th style={{ minWidth: "180px" }}>Transaction ID</th>
@@ -7519,6 +7722,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                 <th style={{ minWidth: "350px" }}>Full Address</th>
                 <th style={{ minWidth: "160px" }}>Location</th>
                 <th style={{ minWidth: "180px" }}>Service</th>
+                <th style={{ minWidth: "250px" }}>Add-on</th>
                 <th style={{ minWidth: "180px" }}>Original Schedule</th>
                 <th style={{ minWidth: "180px" }}>New Schedule</th>
                 <th style={{ minWidth: "250px" }}>Reschedule Reason</th>
@@ -7547,6 +7751,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                 <th style={{ minWidth: "120px" }}>Final Price</th>
                 <th style={{ minWidth: "140px" }}>Advance Amount</th>
                 <th style={{ minWidth: "140px" }}>Pending Amount</th>
+                <th style={{ minWidth: "130px" }}>Payment Status</th>
                 <th style={{ minWidth: "250px" }}>Remarks</th>
                 <th style={{ minWidth: "160px" }}>Assigned Staff</th>
                 <th style={{ minWidth: "140px" }}>Action</th>
@@ -7567,6 +7772,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                 <th style={{ minWidth: "350px" }}>Full Address</th>
                 <th style={{ minWidth: "160px" }}>Location</th>
                 <th style={{ minWidth: "180px" }}>Service</th>
+                <th style={{ minWidth: "250px" }}>Add-on</th>
                 <th style={{ minWidth: "120px" }}>Date</th>
                 <th style={{ minWidth: "100px" }}>Time</th>
                 <th style={{ minWidth: "160px" }}>Assigned Staff</th>
@@ -7607,7 +7813,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                   <td>{b.razorpay_payment_id || "N/A"}</td>
                   <td>{b.customer_name}</td>
                   <td>{b.phone_number || b.user_phone || b.customer_phone || "N/A"}</td>
-                  <td>{b.services?.[0]?.title}</td>
+                  <td>{getMainServiceTitle(b)}</td>
+                  <td>{getBookingAddOnsDisplay(b)}</td>
                   <td>{b.services?.[0]?.price}</td>
                   <td>{b.booking_date ? formatDate(b.booking_date) : "N/A"}</td>
                   <td>{b.booking_time}</td>
@@ -7839,7 +8046,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                         "N/A"
                       )}
                     </td>
-                    <td>{b.services?.[0]?.title}</td>
+                    <td>{getMainServiceTitle(b)}</td>
+                    <td>{getBookingAddOnsDisplay(b)}</td>
                     <td>{b.booking_date ? formatDate(b.booking_date) : "N/A"}</td>
                     <td>{b.services?.[0]?.price}</td>
                     <td style={{ fontWeight: "700", color: "#f59e0b" }}>₹{b.refund_amount || b.total_amount}</td>
@@ -7937,7 +8145,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                             "N/A"
                           )}
                         </td>
-                        <td>{cl.bookings?.services?.[0]?.title || "N/A"}</td>
+                        <td>{getMainServiceTitle(cl.bookings)}</td>
+                        <td>{getBookingAddOnsDisplay(cl.bookings)}</td>
                         <td>{cl.bookings?.booking_date ? formatDate(cl.bookings.booking_date) : "N/A"}</td>
                         {cl.tasks.length > 1 ? (
                           <>
@@ -8096,7 +8305,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                             "N/A"
                           )}
                         </td>
-                        <td>{b.services?.[0]?.title}</td>
+                        <td>{getMainServiceTitle(b)}</td>
+                        <td>{getBookingAddOnsDisplay(b)}</td>
                         <td>{formatDate(b.booking_date)}</td>
                         <td>{b.booking_time}</td>
                         <td>{b.razorpay_payment_id || "N/A"}</td>
@@ -8301,7 +8511,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                               "N/A"
                             )}
                           </td>
-                          <td>{b.services?.[0]?.title || "N/A"}</td>
+                          <td>{getMainServiceTitle(b)}</td>
+                          <td>{getBookingAddOnsDisplay(b)}</td>
                           <td>
                             {b.original_date ? (
                               <div style={{ color: "#0f172a" }}>
@@ -8355,15 +8566,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                             )}
                           </td>
                           <td>
-                            <button
-                              className="allot-btn"
-                              disabled={b.payment_status !== "paid"}
-                              style={{
-                                opacity: b.payment_status === "paid" ? 1 : 0.5,
-                                cursor: b.payment_status === "paid" ? "pointer" : "not-allowed",
-                              }}
-                              onClick={() => fetchStaff(b)}
-                            >
+                            <button                              className="allot-btn"
+                              onClick={() => fetchStaff(b)}                            >
                               {b.assigned_staff_email
                                 ? "Change Staff"
                                 : "Allot Staff"}
@@ -8493,7 +8697,7 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                                 "N/A"
                               )}
                             </td>
-                            <td>{b.services?.[0]?.title || "N/A"}</td>
+                            <td>{getMainServiceTitle(b)}</td>
                             <td>{getBookingAddOnsDisplay(b)}</td>
                             <td>{formatDate(b.booking_date)}</td>
                             <td>{b.booking_time}</td>
@@ -8501,14 +8705,60 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                               {b.total_amount !== undefined && b.total_amount !== null ? `₹${b.total_amount}` : "N/A"}
                             </td>
                             {(() => {
-                              const { advanceAmount, pendingAmount } = getBookingPaymentDetails(b, bookingPaymentsMap);
+                              const {
+                                advanceAmount,
+                                pendingAmount,
+                                rawAdvance,
+                                rawPending,
+                              } = getBookingPaymentDetails(b, bookingPaymentsMap);
+
+                              const isPartialPayment =
+                                Number(rawAdvance || 0) > 0 &&
+                                Number(rawPending || 0) > 0;
+
+                              const isFullyPaid =
+                                Number(rawPending || 0) <= 0 &&
+                                Number(rawAdvance || 0) > 0;
+
                               return (
                                 <>
                                   <td style={{ fontWeight: "600", color: "#1e293b" }}>
                                     {advanceAmount}
                                   </td>
+
                                   <td style={{ fontWeight: "700", color: "#ef4444" }}>
                                     {pendingAmount}
+                                  </td>
+
+                                  <td>
+                                    {isPartialPayment ? (
+                                      <span
+                                        style={{
+                                          color: "#d97706",
+                                          fontWeight: "800",
+                                        }}
+                                      >
+                                        PARTIAL
+                                      </span>
+                                    ) : isFullyPaid ? (
+                                      <span
+                                        style={{
+                                          color: "#16a34a",
+                                          fontWeight: "800",
+                                        }}
+                                      >
+                                        PAID
+                                      </span>
+                                    ) : (
+                                      <span
+                                        style={{
+                                          color: "#dc2626",
+                                          fontWeight: "800",
+                                        }}
+                                      >
+                                        PENDING
+                                      </span>
+                                    )}
                                   </td>
                                 </>
                               );
@@ -8548,15 +8798,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                               )}
                             </td>
                             <td>
-                              <button
-                                className="allot-btn"
-                                disabled={b.payment_status !== "paid"}
-                                style={{
-                                  opacity: b.payment_status === "paid" ? 1 : 0.5,
-                                  cursor: b.payment_status === "paid" ? "pointer" : "not-allowed",
-                                }}
-                                onClick={() => fetchStaff(b)}
-                              >
+                              <button                                className="allot-btn"
+                              onClick={() => fetchStaff(b)}                              >
                                 {b.assigned_staff_email ? "Change Staff" : "Allot Staff"}
                               </button>
 
@@ -8734,7 +8977,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                                 "N/A"
                               )}
                             </td>
-                            <td>{b.services?.[0]?.title || "N/A"}</td>
+                            <td>{getMainServiceTitle(b)}</td>
+                            <td>{getBookingAddOnsDisplay(b)}</td>
                             <td>{formatDate(b.booking_date)}</td>
                             <td>{b.booking_time}</td>
                             <td>
@@ -8771,15 +9015,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
                               )}
                             </td>
                             <td>
-                              <button
-                                className="allot-btn"
-                                disabled={b.payment_status !== "paid"}
-                                style={{
-                                  opacity: b.payment_status === "paid" ? 1 : 0.5,
-                                  cursor: b.payment_status === "paid" ? "pointer" : "not-allowed",
-                                }}
-                                onClick={() => fetchStaff(b)}
-                              >
+                              <button                                className="allot-btn"
+                              onClick={() => fetchStaff(b)}                              >
                                 {b.assigned_staff_email
                                   ? "Change Staff"
                                   : "Allot Staff"}
