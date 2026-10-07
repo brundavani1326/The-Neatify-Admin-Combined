@@ -555,6 +555,123 @@ const getBookingPaymentDetails = (b, paymentsMap = {}) => {
   };
 };
 
+const isPartialPaymentService = (b, allServices = [], paymentsMap = {}) => {
+  if (!b) return false;
+
+  // 1. Direct property on booking object
+  if (
+    b.partial_payment_enabled === true ||
+    String(b.partial_payment_enabled).toLowerCase() === "true" ||
+    b.partial_payment_enabled === 1
+  ) {
+    return true;
+  }
+
+  // 2. Parse services attached to booking
+  let svcs = [];
+  if (Array.isArray(b.services)) {
+    svcs = b.services;
+  } else if (typeof b.services === "string") {
+    try {
+      const parsed = JSON.parse(b.services);
+      if (Array.isArray(parsed)) svcs = parsed;
+      else if (parsed && typeof parsed === "object") svcs = [parsed];
+    } catch (e) {}
+  } else if (b.services && typeof b.services === "object") {
+    svcs = [b.services];
+  }
+
+  // Check each service object in booking
+  for (const svc of svcs) {
+    if (
+      svc.partial_payment_enabled === true ||
+      String(svc.partial_payment_enabled).toLowerCase() === "true" ||
+      svc.partial_payment_enabled === 1
+    ) {
+      return true;
+    }
+    if (
+      svc.partial_payment_amount !== undefined &&
+      svc.partial_payment_amount !== null &&
+      svc.partial_payment_amount !== "" &&
+      Number(svc.partial_payment_amount) > 0
+    ) {
+      return true;
+    }
+  }
+
+  // 3. Match services in booking with master allServices array
+  if (Array.isArray(allServices) && allServices.length > 0) {
+    for (const svc of svcs.length > 0 ? svcs : [b]) {
+      const svcId = svc.id || svc.service_id || b.service_id;
+      const svcTitle =
+        svc.title ||
+        svc.service_title ||
+        svc.name ||
+        b.service_name ||
+        b.title;
+
+      const matchedSvc = allServices.find(
+        (s) =>
+          (svcId && String(s.id) === String(svcId)) ||
+          (svcTitle &&
+            String(s.title || "").trim().toLowerCase() ===
+              String(svcTitle).trim().toLowerCase())
+      );
+
+      if (matchedSvc) {
+        if (
+          matchedSvc.partial_payment_enabled === true ||
+          String(matchedSvc.partial_payment_enabled).toLowerCase() === "true" ||
+          matchedSvc.partial_payment_enabled === 1
+        ) {
+          return true;
+        }
+        if (
+          matchedSvc.partial_payment_amount !== undefined &&
+          matchedSvc.partial_payment_amount !== null &&
+          matchedSvc.partial_payment_amount !== "" &&
+          Number(matchedSvc.partial_payment_amount) > 0
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 4. Booking payment status check
+  const paymentStatus = String(b.payment_status || "").toLowerCase();
+  if (paymentStatus === "partial") {
+    return true;
+  }
+
+  // 5. Payment details check (rawAdvance > 0 && rawPending > 0)
+  if (typeof getBookingPaymentDetails === "function") {
+    const { rawAdvance, rawPending } = getBookingPaymentDetails(b, paymentsMap);
+    if (Number(rawAdvance || 0) > 0 && Number(rawPending || 0) > 0) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const isAllotStaffEnabled = (b, allServices = [], paymentsMap = {}) => {
+  if (!b) return false;
+
+  // Partial payment services allow staff allotment
+  const isPartial = isPartialPaymentService(b, allServices, paymentsMap);
+  if (isPartial) {
+    return true;
+  }
+
+  // Normal payment services ONLY allow staff allotment if payment status is paid or captured
+  const paymentStatus = String(b.payment_status || "").toLowerCase();
+  return paymentStatus === "paid" || paymentStatus === "captured";
+};
+
+
+
 function BookingPage() {
   console.warn("🔥 TEST: BookingPage is running");
   const [bookings, setBookings] = useState([]);
@@ -3403,6 +3520,11 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
       return;
     }
 
+    if (!isAllotStaffEnabled(selectedBooking, allServices, bookingPaymentsMap)) {
+      triggerModal("Action Not Allowed", "Staff allotment is disabled for normal bookings with pending payment. Payment must be completed first.");
+      return;
+    }
+
     if (staff.is_blocked === true) {
       triggerModal("Partner Blocked", "This staff member is currently blocked and cannot be assigned to bookings.");
       return;
@@ -4036,6 +4158,10 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
   };
 
   const fetchStaff = async (booking) => {
+    if (!isAllotStaffEnabled(booking, allServices, bookingPaymentsMap)) {
+      triggerModal("Action Not Allowed", "Staff allotment is disabled for normal bookings with pending payment. Payment must be completed first.");
+      return;
+    }
     setSelectedBooking(booking);
     setAssignDate(booking.booking_date || "");
     setShowStaff(true);
@@ -8597,12 +8723,29 @@ const unassignedBookings = bookings.filter((b) =>
                             )}
                           </td>
                           <td>
-                            <button                              className="allot-btn"
-                              onClick={() => fetchStaff(b)}                            >
-                              {b.assigned_staff_email
-                                ? "Change Staff"
-                                : "Allot Staff"}
-                            </button>
+                            {(() => {
+                              const isEnabled = isAllotStaffEnabled(b, allServices, bookingPaymentsMap);
+                              return (
+                                <button
+                                  className="allot-btn"
+                                  disabled={!isEnabled}
+                                  style={{
+                                    opacity: isEnabled ? 1 : 0.5,
+                                    cursor: isEnabled ? "pointer" : "not-allowed",
+                                    backgroundColor: isEnabled ? undefined : "#e2e8f0",
+                                    color: isEnabled ? undefined : "#94a3b8",
+                                    border: isEnabled ? undefined : "1px solid #cbd5e1"
+                                  }}
+                                  title={isEnabled ? "" : "Staff allotment is disabled for normal bookings with pending payment"}
+                                  onClick={() => {
+                                    if (!isEnabled) return;
+                                    fetchStaff(b);
+                                  }}
+                                >
+                                  {b.assigned_staff_email ? "Change Staff" : "Allot Staff"}
+                                </button>
+                              );
+                            })()}
 
                             <button
                               className="allot-btn"
@@ -8829,10 +8972,29 @@ const unassignedBookings = bookings.filter((b) =>
                               )}
                             </td>
                             <td>
-                              <button                                className="allot-btn"
-                              onClick={() => fetchStaff(b)}                              >
-                                {b.assigned_staff_email ? "Change Staff" : "Allot Staff"}
-                              </button>
+                              {(() => {
+                                const isEnabled = isAllotStaffEnabled(b, allServices, bookingPaymentsMap);
+                                return (
+                                  <button
+                                    className="allot-btn"
+                                    disabled={!isEnabled}
+                                    style={{
+                                      opacity: isEnabled ? 1 : 0.5,
+                                      cursor: isEnabled ? "pointer" : "not-allowed",
+                                      backgroundColor: isEnabled ? undefined : "#e2e8f0",
+                                      color: isEnabled ? undefined : "#94a3b8",
+                                      border: isEnabled ? undefined : "1px solid #cbd5e1"
+                                    }}
+                                    title={isEnabled ? "" : "Staff allotment is disabled for normal bookings with pending payment"}
+                                    onClick={() => {
+                                      if (!isEnabled) return;
+                                      fetchStaff(b);
+                                    }}
+                                  >
+                                    {b.assigned_staff_email ? "Change Staff" : "Allot Staff"}
+                                  </button>
+                                );
+                              })()}
 
                               <button
                                 className="allot-btn"
@@ -9046,12 +9208,29 @@ const unassignedBookings = bookings.filter((b) =>
                               )}
                             </td>
                             <td>
-                              <button                                className="allot-btn"
-                              onClick={() => fetchStaff(b)}                              >
-                                {b.assigned_staff_email
-                                  ? "Change Staff"
-                                  : "Allot Staff"}
-                              </button>
+                              {(() => {
+                                const isEnabled = isAllotStaffEnabled(b, allServices, bookingPaymentsMap);
+                                return (
+                                  <button
+                                    className="allot-btn"
+                                    disabled={!isEnabled}
+                                    style={{
+                                      opacity: isEnabled ? 1 : 0.5,
+                                      cursor: isEnabled ? "pointer" : "not-allowed",
+                                      backgroundColor: isEnabled ? undefined : "#e2e8f0",
+                                      color: isEnabled ? undefined : "#94a3b8",
+                                      border: isEnabled ? undefined : "1px solid #cbd5e1"
+                                    }}
+                                    title={isEnabled ? "" : "Staff allotment is disabled for normal bookings with pending payment"}
+                                    onClick={() => {
+                                      if (!isEnabled) return;
+                                      fetchStaff(b);
+                                    }}
+                                  >
+                                    {b.assigned_staff_email ? "Change Staff" : "Allot Staff"}
+                                  </button>
+                                );
+                              })()}
 
                               {(activeTab === "unassigned" || activeTab === "assigned") && (
                                 <button
