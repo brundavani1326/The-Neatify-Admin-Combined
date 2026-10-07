@@ -3517,43 +3517,8 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
       });
       setBookingPaymentsMap(bpMap);
 
-      const bookingIds = data?.map((b) => b.id).filter(Boolean) || [];
-      let upMap = {};
-      let uploadEmails = [];
-      if (bookingIds.length > 0) {
-        const { data: uploadsData, error: uploadsError } = await supabase
-          .from("service_uploads")
-          .select("*")
-          .in("booking_id", bookingIds);
-
-        if (uploadsError) {
-          console.error("Error fetching service_uploads:", uploadsError);
-        } else if (uploadsData) {
-          uploadsData.forEach((u) => {
-            const email = u.staff_email || u.email;
-            let parsedUploads = u.uploads;
-            if (typeof parsedUploads === "string") {
-              try {
-                parsedUploads = JSON.parse(parsedUploads);
-              } catch (err) {
-                console.error("Error parsing service_uploads JSON string:", err);
-              }
-            }
-            upMap[u.booking_id] = {
-              uploads: parsedUploads,
-              email: email
-            };
-            if (email) {
-              uploadEmails.push(email);
-            }
-          });
-        }
-      }
-
-      const emails = [
-        ...(data?.map((b) => b.assigned_staff_email).filter(Boolean) || []),
-        ...uploadEmails
-      ];
+      // Uploads are fetched on-demand per booking ID when clicking "View" to prevent 400 Bad Request URL length overflow
+      const emails = data?.map((b) => b.assigned_staff_email).filter(Boolean) || [];
       const uniqueEmails = [...new Set(emails)];
 
       let sMap = {};
@@ -3583,7 +3548,6 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
       setBookings(data || []);
       setReviewsMap(rMap);
       setStaffMap(sMap);
-      setUploadsMap(upMap);
 
       const fetchCustomerChecklists = async () => {
         try {
@@ -4135,6 +4099,125 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
     if (typeof str !== "string") return false;
     const s = str.toLowerCase().trim();
     return s.startsWith("http") || s.startsWith("https") || s.startsWith("data:image/");
+  };
+
+  const extractUrlsAndLabels = (sectionObj) => {
+    let urls = [];
+    let labels = [];
+    if (!sectionObj) return { urls, labels };
+    if (typeof sectionObj === "string") {
+      if (sectionObj.trim()) {
+        urls.push(sectionObj.trim());
+        labels.push("");
+      }
+    } else if (Array.isArray(sectionObj)) {
+      sectionObj.forEach((item, idx) => {
+        if (typeof item === "string" && item.trim()) {
+          urls.push(item.trim());
+          labels.push(`upload_${idx + 1}`);
+        } else if (item && typeof item === "object") {
+          const uUrl = item.url || item.src || item.path || Object.values(item)[0];
+          if (typeof uUrl === "string" && uUrl.trim()) {
+            urls.push(uUrl.trim());
+            labels.push(item.label || item.name || `upload_${idx + 1}`);
+          }
+        }
+      });
+    } else if (typeof sectionObj === "object") {
+      Object.entries(sectionObj).forEach(([key, val]) => {
+        if (typeof val === "string" && val.trim()) {
+          urls.push(val.trim());
+          labels.push(key);
+        } else if (Array.isArray(val)) {
+          val.forEach((v) => {
+            if (typeof v === "string" && v.trim()) {
+              urls.push(v.trim());
+              labels.push(key);
+            }
+          });
+        }
+      });
+    }
+    return { urls, labels };
+  };
+
+  const handleViewBookingImages = async (b, type) => {
+    setCurrentImgIndex(0);
+    setImgLoading(true);
+    setShowImageModal(true);
+
+    let uploadData = uploadsMap[b.id];
+
+    // If not yet loaded in cache, search service_uploads using this specific booking ID only
+    if (!uploadData) {
+      try {
+        const { data: uploadsList, error: uploadErr } = await supabase
+          .from("service_uploads")
+          .select("*")
+          .eq("booking_id", b.id)
+          .limit(1);
+
+        let uploadRec = uploadsList && uploadsList[0];
+
+        // Fallback: if not found by b.id and b.booking_id is distinct, try b.booking_id
+        if (!uploadRec && b.booking_id && String(b.booking_id) !== String(b.id)) {
+          const { data: fallbackList } = await supabase
+            .from("service_uploads")
+            .select("*")
+            .eq("booking_id", b.booking_id)
+            .limit(1);
+          if (fallbackList && fallbackList[0]) {
+            uploadRec = fallbackList[0];
+          }
+        }
+
+        if (uploadErr) {
+          console.error("Error fetching service_uploads for booking:", uploadErr);
+        } else if (uploadRec) {
+          let parsedUploads = uploadRec.uploads;
+          if (typeof parsedUploads === "string") {
+            try {
+              parsedUploads = JSON.parse(parsedUploads);
+            } catch (err) {
+              console.error("Error parsing service_uploads JSON string:", err);
+            }
+          }
+          uploadData = {
+            uploads: parsedUploads,
+            email: uploadRec.staff_email || uploadRec.email
+          };
+          setUploadsMap((prev) => ({ ...prev, [b.id]: uploadData }));
+        }
+      } catch (err) {
+        console.error("Error in handleViewBookingImages:", err);
+      }
+    }
+
+    let rawUploads = uploadData?.uploads;
+    if (typeof rawUploads === "string") {
+      try {
+        rawUploads = JSON.parse(rawUploads);
+      } catch (e) {
+        rawUploads = null;
+      }
+    }
+
+    const isStart = type === "start";
+    const section = isStart ? rawUploads?.before : rawUploads?.after;
+    const { urls, labels } = extractUrlsAndLabels(section);
+    const fallbackUrls = getImages(isStart ? b.start_photo_url : b.end_photo_url);
+    const finalUrls = urls.length > 0 ? urls : fallbackUrls;
+    const finalLabels = urls.length > 0 ? labels : [];
+
+    if (finalUrls && finalUrls.length > 0) {
+      setModalImages(finalUrls);
+      setModalImageLabels(finalLabels);
+    } else {
+      setModalImages([isStart ? "No start images available" : "No end images available"]);
+      setModalImageLabels([]);
+    }
+
+    setImgLoading(false);
   };
 
 
@@ -7887,60 +7970,6 @@ const unassignedBookings = bookings.filter((b) =>
                       }
                     }
 
-                    const extractUrlsAndLabels = (sectionObj) => {
-                      let urls = [];
-                      let labels = [];
-                      if (!sectionObj) return { urls, labels };
-                      if (typeof sectionObj === "string") {
-                        if (sectionObj.trim()) {
-                          urls.push(sectionObj.trim());
-                          labels.push("");
-                        }
-                      } else if (Array.isArray(sectionObj)) {
-                        sectionObj.forEach((item, idx) => {
-                          if (typeof item === "string" && item.trim()) {
-                            urls.push(item.trim());
-                            labels.push(`upload_${idx + 1}`);
-                          } else if (item && typeof item === "object") {
-                            const uUrl = item.url || item.src || item.path || Object.values(item)[0];
-                            if (typeof uUrl === "string" && uUrl.trim()) {
-                              urls.push(uUrl.trim());
-                              labels.push(item.label || item.name || `upload_${idx + 1}`);
-                            }
-                          }
-                        });
-                      } else if (typeof sectionObj === "object") {
-                        Object.entries(sectionObj).forEach(([key, val]) => {
-                          if (typeof val === "string" && val.trim()) {
-                            urls.push(val.trim());
-                            labels.push(key);
-                          } else if (Array.isArray(val)) {
-                            val.forEach((v) => {
-                              if (typeof v === "string" && v.trim()) {
-                                urls.push(v.trim());
-                                labels.push(key);
-                              }
-                            });
-                          }
-                        });
-                      }
-                      return { urls, labels };
-                    };
-
-                    // Start Image parsing (before)
-                    const { urls: startUrls, labels: startLabels } = extractUrlsAndLabels(rawUploads?.before);
-                    const hasStartUploads = startUrls.length > 0;
-                    const fallbackStartUrls = getImages(b.start_photo_url);
-                    const finalStartUrls = hasStartUploads ? startUrls : fallbackStartUrls;
-                    const finalStartLabels = hasStartUploads ? startLabels : [];
-
-                    // End Image parsing (after)
-                    const { urls: endUrls, labels: endLabels } = extractUrlsAndLabels(rawUploads?.after);
-                    const hasEndUploads = endUrls.length > 0;
-                    const fallbackEndUrls = getImages(b.end_photo_url);
-                    const finalEndUrls = hasEndUploads ? endUrls : fallbackEndUrls;
-                    const finalEndLabels = hasEndUploads ? endLabels : [];
-
                     return (
                       <>
                         <td>
@@ -7962,18 +7991,7 @@ const unassignedBookings = bookings.filter((b) =>
                               opacity: b.payment_status === "paid" ? 1 : 0.5,
                               cursor: b.payment_status === "paid" ? "pointer" : "not-allowed",
                             }}
-                            onClick={() => {
-                              if (finalStartUrls && finalStartUrls.length > 0) {
-                                setModalImages(finalStartUrls);
-                                setModalImageLabels(finalStartLabels);
-                              } else {
-                                setModalImages(["No start images available"]);
-                                setModalImageLabels([]);
-                              }
-                              setCurrentImgIndex(0);
-                              setImgLoading(true);
-                              setShowImageModal(true);
-                            }}
+                            onClick={() => handleViewBookingImages(b, "start")}
                           >
                             View
                           </button>
@@ -7986,18 +8004,7 @@ const unassignedBookings = bookings.filter((b) =>
                               opacity: b.payment_status === "paid" ? 1 : 0.5,
                               cursor: b.payment_status === "paid" ? "pointer" : "not-allowed",
                             }}
-                            onClick={() => {
-                              if (finalEndUrls && finalEndUrls.length > 0) {
-                                setModalImages(finalEndUrls);
-                                setModalImageLabels(finalEndLabels);
-                              } else {
-                                setModalImages(["No end images available"]);
-                                setModalImageLabels([]);
-                              }
-                              setCurrentImgIndex(0);
-                              setImgLoading(true);
-                              setShowImageModal(true);
-                            }}
+                            onClick={() => handleViewBookingImages(b, "end")}
                           >
                             View
                           </button>
