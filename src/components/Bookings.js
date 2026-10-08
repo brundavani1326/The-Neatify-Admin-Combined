@@ -517,7 +517,16 @@ const getBookingPaymentDetails = (b, paymentsMap = {}) => {
     advance = Number(b.advance_amount);
   } else if (svc && svc.advance_amount !== undefined && svc.advance_amount !== null && svc.advance_amount !== "") {
     advance = Number(svc.advance_amount);
-  } else if (svc && svc.partial_payment_amount !== undefined && svc.partial_payment_amount !== null && svc.partial_payment_amount !== "") {
+  } else if (
+    svc &&
+    (svc.partial_payment_enabled === true ||
+      String(svc.partial_payment_enabled).toLowerCase() === "true" ||
+      svc.partial_payment_enabled === 1 ||
+      svc.partial_payment_enabled === "1") &&
+    svc.partial_payment_amount !== undefined &&
+    svc.partial_payment_amount !== null &&
+    svc.partial_payment_amount !== ""
+  ) {
     advance = Number(svc.partial_payment_amount);
   } else if (b.paid_amount !== undefined && b.paid_amount !== null && Number(b.paid_amount) > 0) {
     advance = Number(b.paid_amount);
@@ -555,19 +564,39 @@ const getBookingPaymentDetails = (b, paymentsMap = {}) => {
   };
 };
 
+// eslint-disable-next-line no-unused-vars
 const isPartialPaymentService = (b, allServices = [], paymentsMap = {}) => {
   if (!b) return false;
 
-  // 1. Direct property on booking object
+  // 1. Explicit partial payment status on booking
+  const paymentStatus = String(b.payment_status || "").toLowerCase().trim();
   if (
-    b.partial_payment_enabled === true ||
-    String(b.partial_payment_enabled).toLowerCase() === "true" ||
-    b.partial_payment_enabled === 1
+    paymentStatus === "partial" ||
+    paymentStatus === "partially_paid" ||
+    paymentStatus === "partially paid" ||
+    paymentStatus === "partial_payment" ||
+    paymentStatus === "advance" ||
+    paymentStatus === "advance_paid" ||
+    paymentStatus === "advance paid"
   ) {
     return true;
   }
 
-  // 2. Parse services attached to booking
+  // 2. Direct property on booking object
+  if (
+    b.partial_payment_enabled === true ||
+    String(b.partial_payment_enabled).toLowerCase() === "true" ||
+    b.partial_payment_enabled === 1 ||
+    b.partial_payment_enabled === "1" ||
+    b.is_partial === true ||
+    String(b.is_partial).toLowerCase() === "true" ||
+    b.is_partial_payment === true ||
+    String(b.is_partial_payment).toLowerCase() === "true"
+  ) {
+    return true;
+  }
+
+  // 3. Parse services attached to booking
   let svcs = [];
   if (Array.isArray(b.services)) {
     svcs = b.services;
@@ -581,26 +610,20 @@ const isPartialPaymentService = (b, allServices = [], paymentsMap = {}) => {
     svcs = [b.services];
   }
 
-  // Check each service object in booking
+  // Check each service object in booking for explicitly enabled partial payment
   for (const svc of svcs) {
-    if (
+    const isSvcPartial =
       svc.partial_payment_enabled === true ||
       String(svc.partial_payment_enabled).toLowerCase() === "true" ||
-      svc.partial_payment_enabled === 1
-    ) {
-      return true;
-    }
-    if (
-      svc.partial_payment_amount !== undefined &&
-      svc.partial_payment_amount !== null &&
-      svc.partial_payment_amount !== "" &&
-      Number(svc.partial_payment_amount) > 0
-    ) {
+      svc.partial_payment_enabled === 1 ||
+      svc.partial_payment_enabled === "1";
+
+    if (isSvcPartial) {
       return true;
     }
   }
 
-  // 3. Match services in booking with master allServices array
+  // 4. Match services in booking with master allServices array for explicitly enabled partial payment
   if (Array.isArray(allServices) && allServices.length > 0) {
     for (const svc of svcs.length > 0 ? svcs : [b]) {
       const svcId = svc.id || svc.service_id || b.service_id;
@@ -611,67 +634,80 @@ const isPartialPaymentService = (b, allServices = [], paymentsMap = {}) => {
         b.service_name ||
         b.title;
 
+      if (!svcId && !svcTitle) continue;
+
       const matchedSvc = allServices.find(
         (s) =>
-          (svcId && String(s.id) === String(svcId)) ||
+          (svcId && s.id && String(s.id) === String(svcId)) ||
           (svcTitle &&
-            String(s.title || "").trim().toLowerCase() ===
+            s.title &&
+            String(s.title).trim().toLowerCase() ===
               String(svcTitle).trim().toLowerCase())
       );
 
       if (matchedSvc) {
-        if (
+        const isMatchedPartial =
           matchedSvc.partial_payment_enabled === true ||
           String(matchedSvc.partial_payment_enabled).toLowerCase() === "true" ||
-          matchedSvc.partial_payment_enabled === 1
-        ) {
-          return true;
-        }
-        if (
-          matchedSvc.partial_payment_amount !== undefined &&
-          matchedSvc.partial_payment_amount !== null &&
-          matchedSvc.partial_payment_amount !== "" &&
-          Number(matchedSvc.partial_payment_amount) > 0
-        ) {
+          matchedSvc.partial_payment_enabled === 1 ||
+          matchedSvc.partial_payment_enabled === "1";
+
+        if (isMatchedPartial) {
           return true;
         }
       }
     }
   }
 
-  // 4. Booking payment status check
-  const paymentStatus = String(b.payment_status || "").toLowerCase();
-  if (paymentStatus === "partial") {
-    return true;
-  }
-
-  // 5. Payment details check (rawAdvance > 0 && rawPending > 0)
-  if (typeof getBookingPaymentDetails === "function") {
-    const { rawAdvance, rawPending } = getBookingPaymentDetails(b, paymentsMap);
-    if (Number(rawAdvance || 0) > 0 && Number(rawPending || 0) > 0) {
+  // 5. Check payments table data for actual advance payments
+  if (paymentsMap && paymentsMap[b.id] && Array.isArray(paymentsMap[b.id]) && paymentsMap[b.id].length > 0) {
+    const hasAdvancePayment = paymentsMap[b.id].some(p => {
+      const pType = String(p.payment_type || p.type || "").toUpperCase();
+      return pType.includes("ADVANCE") || pType.includes("PARTIAL") || pType === "FIRST";
+    });
+    if (hasAdvancePayment) {
       return true;
     }
   }
 
   return false;
 };
-
-const isAllotStaffEnabled = (b, allServices = [], paymentsMap = {}) => {
+const isAllotStaffEnabled = (b) => {
   if (!b) return false;
 
-  // Partial payment services allow staff allotment
-  const isPartial = isPartialPaymentService(b, allServices, paymentsMap);
-  if (isPartial) {
+  const paymentStatus = String(b.payment_status || "")
+    .trim()
+    .toLowerCase();
+
+  // Partial payment → Allow staff allotment
+  if (
+    paymentStatus === "partial" ||
+    paymentStatus === "partially_paid" ||
+    paymentStatus === "partially paid" ||
+    paymentStatus === "partial_payment" ||
+    paymentStatus === "advance" ||
+    paymentStatus === "advance_paid" ||
+    paymentStatus === "advance paid"
+  ) {
     return true;
   }
 
-  // Normal payment services ONLY allow staff allotment if payment status is paid or captured
-  const paymentStatus = String(b.payment_status || "").toLowerCase();
-  return paymentStatus === "paid" || paymentStatus === "captured";
+  // Fully paid → Allow staff allotment
+  if (
+    paymentStatus === "paid" ||
+    paymentStatus === "captured" ||
+    paymentStatus === "success" ||
+    paymentStatus === "succeeded" ||
+    paymentStatus === "completed" ||
+    paymentStatus === "full_paid" ||
+    paymentStatus === "fully_paid"
+  ) {
+    return true;
+  }
+
+  // Pending / Failed → Disable staff allotment
+  return false;
 };
-
-
-
 function BookingPage() {
   console.warn("🔥 TEST: BookingPage is running");
   const [bookings, setBookings] = useState([]);
@@ -7862,7 +7898,7 @@ const unassignedBookings = bookings.filter((b) =>
                 <th style={{ minWidth: "120px" }}>Booking ID</th>
                 <th style={{ minWidth: "100px" }}>Platform</th>
                 <th style={{ minWidth: "120px" }}>Total Amount</th>
-                <th style={{ minWidth: "130px" }}>Payment Status</th>
+                <th style={{ minWidth: "130px" }}>Payment Type</th>
                 <th style={{ minWidth: "180px" }}>Transaction ID</th>
                 <th style={{ minWidth: "160px" }}>Customer Name</th>
                 <th style={{ minWidth: "130px" }}>Phone</th>
@@ -7984,7 +8020,7 @@ const unassignedBookings = bookings.filter((b) =>
                 <th style={{ minWidth: "120px" }}>Final Price</th>
                 <th style={{ minWidth: "140px" }}>Advance Amount</th>
                 <th style={{ minWidth: "140px" }}>Pending Amount</th>
-                <th style={{ minWidth: "130px" }}>Payment Status</th>
+                <th style={{ minWidth: "130px" }}>Payment Type</th>
                 <th style={{ minWidth: "250px" }}>Remarks</th>
                 <th style={{ minWidth: "160px" }}>Assigned Staff</th>
                 <th style={{ minWidth: "140px" }}>Action</th>
@@ -8880,21 +8916,11 @@ const unassignedBookings = bookings.filter((b) =>
                             </td>
                             {(() => {
                               const {
-                                advanceAmount,
-                                pendingAmount,
-                                rawAdvance,
-                                rawPending,
-                              } = getBookingPaymentDetails(b, bookingPaymentsMap);
+  advanceAmount,
+  pendingAmount,
+} = getBookingPaymentDetails(b, bookingPaymentsMap);
 
-                              const isPartialPayment =
-                                Number(rawAdvance || 0) > 0 &&
-                                Number(rawPending || 0) > 0;
-
-                              const isFullyPaid =
-                                Number(rawPending || 0) <= 0 &&
-                                Number(rawAdvance || 0) > 0;
-
-                              return (
+return (
                                 <>
                                   <td style={{ fontWeight: "600", color: "#1e293b" }}>
                                     {advanceAmount}
@@ -8905,32 +8931,17 @@ const unassignedBookings = bookings.filter((b) =>
                                   </td>
 
                                   <td>
-                                    {isPartialPayment ? (
-                                      <span
-                                        style={{
-                                          color: "#d97706",
-                                          fontWeight: "800",
-                                        }}
-                                      >
-                                        PARTIAL
-                                      </span>
-                                    ) : isFullyPaid ? (
-                                      <span
-                                        style={{
-                                          color: "#16a34a",
-                                          fontWeight: "800",
-                                        }}
-                                      >
-                                        PAID
+                                    {isPartialPaymentService(
+                                      b,
+                                      allServices,
+                                      bookingPaymentsMap
+                                    ) ? (
+                                      <span style={{ color: "#d97706", fontWeight: "800" }}>
+                                        PARTIAL PAYMENT
                                       </span>
                                     ) : (
-                                      <span
-                                        style={{
-                                          color: "#dc2626",
-                                          fontWeight: "800",
-                                        }}
-                                      >
-                                        PENDING
+                                      <span style={{ color: "#16a34a", fontWeight: "800" }}>
+                                        FULL PAYMENT
                                       </span>
                                     )}
                                   </td>
