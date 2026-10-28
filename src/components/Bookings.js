@@ -531,16 +531,35 @@ const getBookingPaymentDetails = (b, paymentsMap = {}) => {
   } else if (b.paid_amount !== undefined && b.paid_amount !== null && Number(b.paid_amount) > 0) {
     advance = Number(b.paid_amount);
   } else {
-    const status = String(b.payment_status || "").toLowerCase();
-    if (status === "paid" || status === "captured") {
+    const status = String(b.payment_status || "").trim().toLowerCase();
+    const isPaidStatus =
+      status === "paid" ||
+      status === "captured" ||
+      status === "success" ||
+      status === "succeeded" ||
+      status === "completed" ||
+      status === "full_paid" ||
+      status === "fully_paid";
+
+    if (isPaidStatus) {
       advance = total;
     } else {
       advance = 0;
     }
   }
 
-  if (hasPaymentsTableData && remainingFromPayments > 0) {
-    pending = Math.max(0, total - advanceFromPayments);
+  const status = String(b.payment_status || "").trim().toLowerCase();
+  const isFullyPaid =
+    status === "paid" ||
+    status === "captured" ||
+    status === "success" ||
+    status === "succeeded" ||
+    status === "completed" ||
+    status === "full_paid" ||
+    status === "fully_paid";
+
+  if (isFullyPaid || (hasPaymentsTableData && (advanceFromPayments + remainingFromPayments >= total || remainingFromPayments > 0))) {
+    pending = 0;
   } else if (b.pending_amount !== undefined && b.pending_amount !== null && b.pending_amount !== "") {
     pending = Number(b.pending_amount);
   } else if (svc && svc.pending_amount !== undefined && svc.pending_amount !== null && svc.pending_amount !== "") {
@@ -4365,9 +4384,15 @@ END TEMPORARILY DISABLED T&C + OTP FLOW
     }
 
     const isStart = type === "start";
-    const section = isStart ? rawUploads?.before : rawUploads?.after;
+    const section = isStart
+      ? (rawUploads?.before ?? rawUploads?.start ?? rawUploads?.start_photos ?? rawUploads?.start_images)
+      : (rawUploads?.after ?? rawUploads?.end ?? rawUploads?.end_photos ?? rawUploads?.end_images);
     const { urls, labels } = extractUrlsAndLabels(section);
-    const fallbackUrls = getImages(isStart ? b.start_photo_url : b.end_photo_url);
+    const fallbackUrls = getImages(
+      isStart
+        ? (b.start_photo_url || b.start_image || b.start_photo || b.before_photos || b.start_photos || b.start_images)
+        : (b.end_photo_url || b.end_image || b.end_photo || b.after_photos || b.end_photos || b.end_images)
+    );
     const finalUrls = urls.length > 0 ? urls : fallbackUrls;
     const finalLabels = urls.length > 0 ? labels : [];
 
@@ -8000,7 +8025,7 @@ const unassignedBookings = bookings.filter((b) =>
                 <th style={{ minWidth: "80px" }}>Delete</th>
                 <th style={{ minWidth: "80px" }}>Copy</th>
               </tr>
-            ) : activeTab === "unassigned" ? (
+            ) : (activeTab === "unassigned" || activeTab === "assigned") ? (
               <tr>
                 <th style={{ minWidth: "160px" }}>Created At</th>
                 <th style={{ minWidth: "120px" }}>Booking ID</th>
@@ -8132,6 +8157,19 @@ const unassignedBookings = bookings.filter((b) =>
                       }
                     }
 
+                    const isManual =
+                      b.platform === "Admin Manual" ||
+                      String(b.platform || "").toLowerCase().includes("manual");
+                    const statusLower = String(b.payment_status || "").trim().toLowerCase();
+                    const isPaid =
+                      statusLower === "paid" ||
+                      statusLower === "captured" ||
+                      statusLower === "completed" ||
+                      statusLower === "success" ||
+                      statusLower === "full_paid" ||
+                      statusLower === "fully_paid";
+                    const isImageAllowed = isManual || isPaid;
+
                     return (
                       <>
                         <td>
@@ -8148,10 +8186,10 @@ const unassignedBookings = bookings.filter((b) =>
                         <td>
                           <button
                             className="allot-btn"
-                            disabled={b.payment_status !== "paid"}
+                            disabled={!isImageAllowed}
                             style={{
-                              opacity: b.payment_status === "paid" ? 1 : 0.5,
-                              cursor: b.payment_status === "paid" ? "pointer" : "not-allowed",
+                              opacity: isImageAllowed ? 1 : 0.5,
+                              cursor: isImageAllowed ? "pointer" : "not-allowed",
                             }}
                             onClick={() => handleViewBookingImages(b, "start")}
                           >
@@ -8161,10 +8199,10 @@ const unassignedBookings = bookings.filter((b) =>
                         <td>
                           <button
                             className="allot-btn"
-                            disabled={b.payment_status !== "paid"}
+                            disabled={!isImageAllowed}
                             style={{
-                              opacity: b.payment_status === "paid" ? 1 : 0.5,
-                              cursor: b.payment_status === "paid" ? "pointer" : "not-allowed",
+                              opacity: isImageAllowed ? 1 : 0.5,
+                              cursor: isImageAllowed ? "pointer" : "not-allowed",
                             }}
                             onClick={() => handleViewBookingImages(b, "end")}
                           >
@@ -8850,7 +8888,7 @@ const unassignedBookings = bookings.filter((b) =>
                           </td>
                         </tr>
                       ))
-                      : activeTab === "unassigned"
+                      : (activeTab === "unassigned" || activeTab === "assigned")
                         ? paginatedBookings.map((b) => (
                           <tr key={b.id}>
                             <td>
