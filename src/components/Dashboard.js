@@ -6,6 +6,7 @@ import Services from "./Services";
 import Bookings from "./Bookings";
 import CategoryHubCounts from "./CategoryHubCounts";
 import PromotionalBanners from "./PromotionalBanners";
+import AppConfiguration from "./AppConfiguration";
 import Loader from "./Loader";
 import neatifyLogo from "../neatifylogo.png";
 
@@ -4560,6 +4561,16 @@ function Dashboard() {
           }}
         >
           Category Hub Counts
+        </button>
+      
+        <button
+          className={activeTab === "app-configuration" ? "active" : ""}
+          onClick={() => {
+            setActiveTab("app-configuration");
+            setIsStaffViewOpen(false);
+          }}
+        >
+          App Configuration
         </button>
 
 
@@ -9220,6 +9231,7 @@ function Dashboard() {
           )}
 
           {activeTab === "category-hub-counts" && <CategoryHubCounts />}
+          {activeTab === "app-configuration" && <AppConfiguration />}
         </>
       )}
 
